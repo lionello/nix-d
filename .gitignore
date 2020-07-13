@@ -13,3 +13,5 @@ nix-d-test-*
 *.o
 *.obj
 *.lst
+.envrc
+main

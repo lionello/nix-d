@@ -88,38 +88,38 @@ private auto precedence(Tok tok) pure {
         Associativity assoc;
     }
     switch (tok) {
-    case Tok.SELECT: // non-assoc
+    case Tok.SELECT:
         return Precedence(13, Associativity.NONE);
-    case Tok.APP: // non-assoc
+    case Tok.APP:
         return Precedence(12, Associativity.NONE);
-    case Tok.NEGATE: // non-assoc
+    case Tok.NEGATE:
         return Precedence(11, Associativity.NONE);
-    case Tok.HAS_ATTR: // non-assoc
+    case Tok.HAS_ATTR:
         return Precedence(10, Associativity.NONE);
-    case Tok.CONCAT: // right
+    case Tok.CONCAT:
         return Precedence(9, Associativity.RIGHT);
-    case Tok.MUL: // left
-    case Tok.DIV: // left
+    case Tok.MUL:
+    case Tok.DIV:
         return Precedence(8, Associativity.LEFT);
-    case Tok.ADD: // left
-    case Tok.SUB: // left
+    case Tok.ADD:
+    case Tok.SUB:
         return Precedence(7, Associativity.LEFT);
-    case Tok.NOT: // left
+    case Tok.NOT:
         return Precedence(6, Associativity.LEFT);
-    case Tok.UPDATE: // right
+    case Tok.UPDATE:
         return Precedence(5, Associativity.RIGHT);
-    case Tok.LT: // non-assoc
-    case Tok.LEQ: // non-assoc
-    case Tok.GT: // non-assoc
-    case Tok.GEQ: // non-assoc
+    case Tok.LT:
+    case Tok.LEQ:
+    case Tok.GT:
+    case Tok.GEQ:
         return Precedence(4, Associativity.NONE);
-    case Tok.EQ: // non-assoc
-    case Tok.NEQ: // non-assoc
+    case Tok.EQ:
+    case Tok.NEQ:
         return Precedence(3, Associativity.NONE);
-    case Tok.AND: // left
-    case Tok.OR: // left
+    case Tok.AND:
+    case Tok.OR:
         return Precedence(2, Associativity.LEFT);
-    case Tok.IMPL: // right
+    case Tok.IMPL:
         return Precedence(1, Associativity.RIGHT);
     default:
         import std.conv:to;

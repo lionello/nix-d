@@ -13,10 +13,12 @@ struct AttrName {
     Ident ident;
     Expr expr;
     this(Ident i) pure {
+        assert(i);
         this.ident = i;
     }
 
     this(Expr e) pure {
+        assert(e);
         this.expr = e;
     }
 }
@@ -49,6 +51,7 @@ abstract class Expr {
 class ExprOpNot : Expr {
     Expr expr;
     this(Expr expr) pure {
+        assert(expr);
         this.expr = expr;
     }
 
@@ -66,6 +69,8 @@ class ExprBinaryOp : BinaryExpr {
     Tok op;
     Expr right;
     this(Tok op, Expr left, Expr right) pure {
+        assert(left);
+        assert(right);
         this.op = op;
         this.left = left;
         this.right = right;
@@ -78,12 +83,14 @@ class ExprBinaryOp : BinaryExpr {
 }
 
 class ExprSelect : BinaryExpr {
-    Expr def;
     AttrPath ap;
-    this(Expr left, Expr def, AttrPath ap) pure {
+    Expr def;
+    this(Expr left, AttrPath ap, Expr def = null) pure {
+        assert(left);
+        assert(ap);
         this.left = left;
-        this.def = def;
         this.ap = ap;
+        this.def = def;
     }
 
     override void accept(Visitor v) {
@@ -95,6 +102,8 @@ class ExprSelect : BinaryExpr {
 class ExprOpHasAttr : BinaryExpr {
     AttrPath ap;
     this(Expr left, AttrPath ap) pure {
+        assert(left);
+        assert(ap);
         this.left = left;
         this.ap = ap;
     }
@@ -228,6 +237,8 @@ class ExprLet : Expr {
     ExprAttrs attrs;
     Expr body;
     this(ExprAttrs attrs, Expr body) pure {
+        assert(attrs);
+        assert(body);
         this.attrs = attrs;
         this.body = body;
     }
@@ -241,6 +252,8 @@ class ExprWith : Expr {
     Expr attrs, body;
     // uint prevWith;
     this(Expr attrs, Expr body) pure {
+        assert(attrs);
+        assert(body);
         this.attrs = attrs;
         this.body = body;
     }
@@ -253,6 +266,9 @@ class ExprWith : Expr {
 class ExprIf : Expr {
     Expr cond, then, else_;
     this(Expr cond, Expr then, Expr else_) pure {
+        assert(cond);
+        assert(then);
+        assert(else_);
         this.cond = cond;
         this.then = then;
         this.else_ = else_;
@@ -266,6 +282,8 @@ class ExprIf : Expr {
 class ExprAssert : Expr {
     Expr cond, body;
     this(Expr cond, Expr body) pure {
+        assert(cond);
+        assert(body);
         this.cond = cond;
         this.body = body;
     }
@@ -308,7 +326,7 @@ ExprAttrs parseBinds(R)(ref TokenRange!R input) pure {
                 foreach (ap; parseAttrs(input)) {
                     assert(ap.ident);
                     assert(ap.ident !in binds.attrs);
-                    binds.attrs[ap.ident] = AttrDef(new ExprSelect(expr, null, [
+                    binds.attrs[ap.ident] = AttrDef(new ExprSelect(expr, [
                                 ap
                             ]), true);
                 }
@@ -378,7 +396,7 @@ Expr parseSimple(R)(ref TokenRange!R input) pure {
         assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
         input.popFront(); // eat the }
         binds.recursive = true;
-        return new ExprSelect(binds, null, [AttrName("body")]);
+        return new ExprSelect(binds, [AttrName("body")]);
     case Tok.REC:
         input.popFront(); // eat the rec
         assert(input.front.tok == Tok.LEFT_CURLY, input.front.s);
@@ -639,7 +657,7 @@ Expr parseIf(R)(ref TokenRange!R input) pure {
 Expr parseOp(R)(ref TokenRange!R input) pure {
     debug writeln("parseOp ", input.front.s);
     switch (input.front.tok) {
-    case Tok.NOT: // left
+    case Tok.NOT:
         input.popFront(); // eat the !
         auto expr = parseOp(input);
         if (auto bin = cast(BinaryExpr) expr) {
@@ -648,7 +666,7 @@ Expr parseOp(R)(ref TokenRange!R input) pure {
             assert(assoc == Associativity.RIGHT, "TODO");
         }
         return new ExprOpNot(expr);
-    case Tok.NEGATE: // non-assoc
+    case Tok.NEGATE:
         input.popFront(); // eat the -
         auto expr = parseOp(input);
         if (auto bin = cast(BinaryExpr) expr) {
@@ -666,7 +684,7 @@ Expr parseOp(R)(ref TokenRange!R input) pure {
         assert(left, input.front.s);
         auto op = input.front.tok;
         switch (op) {
-        case Tok.HAS_ATTR: // non-assoc
+        case Tok.HAS_ATTR:
             input.popFront(); // eat the ?
             auto ap = parseAttrPath(input);
             assert(ap, input.front.s);
@@ -675,21 +693,21 @@ Expr parseOp(R)(ref TokenRange!R input) pure {
         case Tok.NEGATE:
             op = Tok.SUB;
             goto case Tok.SUB;
-        case Tok.CONCAT: // right
-        case Tok.MUL: // left
-        case Tok.DIV: // left
-        case Tok.ADD: // left
-        case Tok.SUB: // left
-        case Tok.UPDATE: // right
-        case Tok.LT: // non-assoc
-        case Tok.LEQ: // non-assoc
-        case Tok.GT: // non-assoc
-        case Tok.GEQ: // non-assoc
-        case Tok.EQ: // non-assoc
-        case Tok.NEQ: // non-assoc
-        case Tok.AND: // left
-        case Tok.OR: // left
-        case Tok.IMPL: // right
+        case Tok.CONCAT:
+        case Tok.MUL:
+        case Tok.DIV:
+        case Tok.ADD:
+        case Tok.SUB:
+        case Tok.UPDATE:
+        case Tok.LT:
+        case Tok.LEQ:
+        case Tok.GT:
+        case Tok.GEQ:
+        case Tok.EQ:
+        case Tok.NEQ:
+        case Tok.AND:
+        case Tok.OR:
+        case Tok.IMPL:
             input.popFront(); // eat the op
             auto right = parseOp(input);
             if (auto bin = cast(BinaryExpr) right) {
@@ -767,9 +785,9 @@ Expr parseSelect(R)(ref TokenRange!R input) pure {
         if (input.front.tok == Tok.OR_KW) {
             input.popFront(); // eat the or
             auto def = parseSelect(input);
-            return new ExprSelect(arg, def, attrpath);
+            return new ExprSelect(arg, attrpath, def);
         } else {
-            return new ExprSelect(arg, null, attrpath);
+            return new ExprSelect(arg, attrpath);
         }
     case Tok.OR_KW:
         assert(arg);
