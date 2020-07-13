@@ -68,12 +68,6 @@ enum Tok {
     REC,
     INHERIT,
     OR_KW,
-    // TRUE,
-    // FALSE,
-    // NULL,
-    // THROW,
-    // IMPORT,
-    // CURPOS,
 }
 
 enum Associativity {
@@ -130,7 +124,7 @@ private auto precedence(Tok tok) pure {
 Associativity associativity(Tok left, Tok right) pure {
     const lp = left.precedence;
     const rp = right.precedence;
-    debug writeln("%prec ", lp, " ", rp);
+    // debug writeln("%prec ", lp, " ", rp);
     if (lp.prec < rp.prec) {
         return Associativity.RIGHT;
     } else if (lp.prec > rp.prec) {
@@ -461,13 +455,13 @@ Tok popNextTok(R)(ref R input) pure if (isForwardRange!R) {
         }
     case '\'':
         assert(input.front == '\'');
-        input.popFront(); // eat the '
+        input.popFront(); // eat the 2nd '
         while (true) {
             switch (input.front) {
             case '\'':
                 input.popFront(); // eat the '
                 if (input.front == '\'') {
-                    input.popFront(); // eat the '
+                    input.popFront(); // eat the 2nd '
                     if (input.empty || (input.front != '$'
                             && input.front != '\\' && input.front != '\''))
                         return Tok.IND_STRING;
@@ -580,34 +574,28 @@ unittest {
     static assert(before(all, all[1 .. $]) == all[0 .. 1]);
 }
 
-private Tok tokenizeIdent(string id) pure {
+private Tok tokenizeIdent(string id) pure nothrow {
     switch (id) {
     case "assert":
         return Tok.ASSERT;
     case "else":
         return Tok.ELSE;
-        // case "false": return Tok.false_;
     case "if":
         return Tok.IF;
-        // case "import": return Tok.IMPORT;
     case "in":
         return Tok.IN;
     case "inherit":
         return Tok.INHERIT;
     case "let":
         return Tok.LET;
-    // case "null": return Tok.NULL;
     case "or":
         return Tok.OR_KW;
     case "rec":
         return Tok.REC;
     case "then":
         return Tok.THEN;
-        // case "throw": return Tok.THROW;
-        // case "true": return Tok.true_;
     case "with":
         return Tok.WITH;
-        // case "__curPos": return Tok.CURPOS;
     default:
         return Tok.IDENTIFIER;
     }
@@ -617,7 +605,7 @@ Token popToken(R)(ref R input) pure if (isForwardRange!R) {
     const save = input.save;
     const tok = popNextTok(input);
     string body = before(save, input);
-    debug writeln(tok, body);
+    // debug writeln(tok, body);
     return Token(tok == Tok.IDENTIFIER ? tokenizeIdent(body) : tok, body);
 }
 

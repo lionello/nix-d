@@ -660,13 +660,11 @@ class Evaluator : Visitor {
     }
 
     const(Value) lookupVar(string name) {
-        const(Env)* curEnv = this.env;
-        while (curEnv) {
+        for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
                 return *v;
-            curEnv = curEnv.up;
         }
         assert(0);
     }
@@ -806,7 +804,11 @@ class Evaluator : Visitor {
     }
 
     void visit(ExprWith e) {
-        const newEnv = Env(env, visit(e.attrs).attrs);// TODO: make lazy
+        debug writeln(e.attrs);
+        auto att = visit(e.attrs);
+        import std.conv:to;
+        assert(att.type == Type.Attrs, to!string(att.type));
+        const newEnv = Env(env, att.attrs);// TODO: make lazy
         env = &newEnv;
         visit(e.body);
         env = newEnv.up;
@@ -878,6 +880,7 @@ void main(string[] args) {
         auto eval = new Evaluator;
         parseExpression(tr).accept(eval);
         writeln(eval.value.type);
+        writeln("Done.");
         // while (!s.empty) {
         //     const t = popNextTok(s);
         //     debug write(t, ' ');

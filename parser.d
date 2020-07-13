@@ -12,12 +12,12 @@ alias Ident = string;
 struct AttrName {
     Ident ident;
     Expr expr;
-    this(Ident i) pure {
+    this(Ident i) pure nothrow {
         assert(i);
         this.ident = i;
     }
 
-    this(Expr e) pure {
+    this(Expr e) pure nothrow {
         assert(e);
         this.expr = e;
     }
@@ -45,12 +45,13 @@ interface Visitor {
 }
 
 abstract class Expr {
+    Loc loc; // TODO
     abstract void accept(Visitor v);
 }
 
 class ExprOpNot : Expr {
     Expr expr;
-    this(Expr expr) pure {
+    this(Expr expr) pure nothrow {
         assert(expr);
         this.expr = expr;
     }
@@ -62,13 +63,13 @@ class ExprOpNot : Expr {
 
 abstract class BinaryExpr : Expr {
     Expr left;
-    @property abstract Tok operator() pure;
+    @property abstract Tok operator() nothrow const pure;
 }
 
 class ExprBinaryOp : BinaryExpr {
     Tok op;
     Expr right;
-    this(Tok op, Expr left, Expr right) pure {
+    this(Tok op, Expr left, Expr right) pure nothrow {
         assert(left);
         assert(right);
         this.op = op;
@@ -79,13 +80,13 @@ class ExprBinaryOp : BinaryExpr {
     override void accept(Visitor v) {
         v.visit(this);
     }
-    override Tok operator() pure { return op; }
+    override Tok operator() nothrow const pure { return op; }
 }
 
 class ExprSelect : BinaryExpr {
     AttrPath ap;
     Expr def;
-    this(Expr left, AttrPath ap, Expr def = null) pure {
+    this(Expr left, AttrPath ap, Expr def = null) pure nothrow {
         assert(left);
         assert(ap);
         this.left = left;
@@ -96,12 +97,12 @@ class ExprSelect : BinaryExpr {
     override void accept(Visitor v) {
         v.visit(this);
     }
-    override Tok operator() pure { return Tok.SELECT; }
+    override Tok operator() nothrow const pure { return Tok.SELECT; }
 }
 
 class ExprOpHasAttr : BinaryExpr {
     AttrPath ap;
-    this(Expr left, AttrPath ap) pure {
+    this(Expr left, AttrPath ap) pure nothrow {
         assert(left);
         assert(ap);
         this.left = left;
@@ -111,7 +112,7 @@ class ExprOpHasAttr : BinaryExpr {
     override void accept(Visitor v) {
         v.visit(this);
     }
-    override Tok operator() pure { return Tok.HAS_ATTR; }
+    override Tok operator() nothrow const pure { return Tok.HAS_ATTR; }
 }
 
 abstract class ValueExpr : Expr {
@@ -119,7 +120,7 @@ abstract class ValueExpr : Expr {
 
 class ExprInt : ValueExpr {
     NixInt n;
-    this(NixInt n) pure {
+    this(NixInt n) pure nothrow {
         this.n = n;
     }
 
@@ -130,7 +131,7 @@ class ExprInt : ValueExpr {
 
 class ExprFloat : ValueExpr {
     NixFloat f;
-    this(NixFloat f) pure {
+    this(NixFloat f) pure nothrow {
         this.f = f;
     }
 
@@ -142,7 +143,7 @@ class ExprFloat : ValueExpr {
 class ExprString : ValueExpr {
     string s;
     //context c;
-    this(string s) pure {
+    this(string s) pure nothrow {
         this.s = s;
     }
 
@@ -153,7 +154,7 @@ class ExprString : ValueExpr {
 
 class ExprPath : ValueExpr {
     string p;
-    this(string p) pure {
+    this(string p) pure nothrow {
         this.p = p;
     }
 
@@ -166,7 +167,7 @@ class ExprVar : Expr {
     Ident name;
     // int level;
     //uint displ; // displacement
-    this(Ident name) pure {
+    this(Ident name) pure nothrow {
         assert(name);
         this.name = name;
     }
@@ -198,7 +199,7 @@ class ExprAttrs : Expr {
 
 class ExprList : Expr {
     Expr[] elems;
-    this(Expr[] elems) pure {
+    this(Expr[] elems) pure nothrow {
         this.elems = elems;
     }
 
@@ -221,7 +222,7 @@ class ExprLambda : Expr {
     Ident arg;
     Formals formals;
     Expr body;
-    this(Ident arg, Formals formals, Expr body) pure {
+    this(Expr body, Ident arg, Formals formals) pure nothrow {
         assert(body);
         this.arg = arg;
         this.formals = formals;
@@ -236,7 +237,7 @@ class ExprLambda : Expr {
 class ExprLet : Expr {
     ExprAttrs attrs;
     Expr body;
-    this(ExprAttrs attrs, Expr body) pure {
+    this(ExprAttrs attrs, Expr body) pure nothrow {
         assert(attrs);
         assert(body);
         this.attrs = attrs;
@@ -251,7 +252,7 @@ class ExprLet : Expr {
 class ExprWith : Expr {
     Expr attrs, body;
     // uint prevWith;
-    this(Expr attrs, Expr body) pure {
+    this(Expr attrs, Expr body) pure nothrow {
         assert(attrs);
         assert(body);
         this.attrs = attrs;
@@ -265,7 +266,7 @@ class ExprWith : Expr {
 
 class ExprIf : Expr {
     Expr cond, then, else_;
-    this(Expr cond, Expr then, Expr else_) pure {
+    this(Expr cond, Expr then, Expr else_) pure nothrow {
         assert(cond);
         assert(then);
         assert(else_);
@@ -281,7 +282,7 @@ class ExprIf : Expr {
 
 class ExprAssert : Expr {
     Expr cond, body;
-    this(Expr cond, Expr body) pure {
+    this(Expr cond, Expr body) pure nothrow {
         assert(cond);
         assert(body);
         this.cond = cond;
@@ -491,6 +492,7 @@ unittest {
     assert(cast(ExprPath) parse("~/a"));
     assert(cast(ExprBinaryOp) parse("<a>"));
     assert(cast(ExprVar) parse("libcap/* bla*/"));
+    assert(cast(ExprString) parse(`"4n${"2"}"`));
 }
 
 Formals parseFormals(R)(ref TokenRange!R input) pure {
@@ -560,13 +562,13 @@ Expr parseExpression(R)(ref TokenRange!R input) pure {
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(t.s, formals, body);
+            return new ExprLambda(body, t.s, formals);
         case Tok.COLON:
             input.popFront(); // eat the id
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(t.s, null, body);
+            return new ExprLambda(body, t.s, null);
         default:
             break;
         }
@@ -591,13 +593,13 @@ Expr parseExpression(R)(ref TokenRange!R input) pure {
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(id, formals, body);
+            return new ExprLambda(body, id, formals);
         case Tok.COLON:
             input = f; // fast forward
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(null, formals, body);
+            return new ExprLambda(body, null, formals);
         default:
             // assert(0, input.front.s);
             break;
