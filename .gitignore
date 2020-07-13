@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/nix-d
+nix-d.so
+nix-d.dylib
+nix-d.dll
+nix-d.a
+nix-d.lib
+nix-d-test-*
+*.exe
+*.o
+*.obj
+*.lst
