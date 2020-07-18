@@ -255,7 +255,7 @@ private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
     Token[] tokens = [Token(Tok.DOLLAR_CURLY)];
     auto level = 1;
     while (true) {
-        const t = popToken(input);
+        const t = popToken(input, true);
         tokens ~= t;
         switch (t.tok) {
         case Tok.DOLLAR_CURLY:
@@ -266,9 +266,12 @@ private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
             if (--level == 0)
                 return tokens;
             break;
-        case Tok.STRING:
-        case Tok.IND_STRING:
-            // TODO: explode?
+        case Tok.STRING_OPEN:
+            tokens ~= parseString(input, false);
+            break;
+        case Tok.IND_STRING_OPEN:
+            tokens ~= parseIndString(input, false);
+            break;
         default:
             break;
         }
@@ -284,13 +287,18 @@ unittest {
         Token(Tok.LEFT_CURLY),
         Token(Tok.IDENTIFIER, "b"),
         Token(Tok.ASSIGN),
-        Token(Tok.STRING, `"x${a}"`), // TODO: explode
+        Token(Tok.STRING_OPEN),
+        Token(Tok.STR, "x"),
+        Token(Tok.DOLLAR_CURLY),
+        Token(Tok.IDENTIFIER, "a"),
+        Token(Tok.RIGHT_CURLY),
+        Token(Tok.STRING_CLOSE),
         Token(Tok.SEMICOLON),
         Token(Tok.RIGHT_CURLY),
         Token(Tok.SELECT),
         Token(Tok.IDENTIFIER, "b"),
         Token(Tok.RIGHT_CURLY)] == parseDollar(r));
-    assert(r.empty);
+    assert(r.empty, r);
 }
 
 private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
@@ -302,13 +310,14 @@ private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
     }
 }
 
-private Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+    Token[] tokens;
     if (popOpen) {
-        assert(input.front == '"');
-        input.popFront();
+        assert(input.front == '"', input);
+        input.popFront(); // eat the "
+        tokens ~= Token(Tok.STRING_OPEN);
     }
     assert(!input.empty);
-    Token[] tokens = [Token(Tok.STRING_OPEN)];
     string str;
     void flush() {
         if (str) { tokens ~= Token(Tok.STR, str); str = null; }
@@ -350,19 +359,19 @@ unittest {
         Token(Tok.RIGHT_CURLY),
         Token(Tok.STR, "$4\\\n"),
         Token(Tok.STRING_CLOSE)] == parseString(r));
-    assert(r.empty);
+    assert(r.empty, r);
 }
 
-private Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+    Token[] tokens;
     if (popOpen) {
         assert(input.front == '\'');
-        input.popFront();
+        input.popFront(); // eat the 1st '
+        assert(input.front == '\'');
+        input.popFront(); // eat the 2nd '
+        tokens ~= Token(Tok.IND_STRING_OPEN);
     }
     assert(!input.empty);
-    assert(input.front == '\'');
-    input.popFront(); // eat the 2nd '
-    assert(!input.empty);
-    Token[] tokens = [Token(Tok.IND_STRING_OPEN)];
     string str;
     void flush() {
         if (str) { tokens ~= Token(Tok.STR, str); str = null; }
@@ -406,7 +415,7 @@ unittest {
         Token(Tok.IDENTIFIER, "a"),
         Token(Tok.RIGHT_CURLY),
         Token(Tok.IND_STRING_CLOSE)] == parseIndString(r));
-    assert(r.empty);
+    assert(r.empty, r);
 }
 
 private bool parseURI(R)(ref R input) pure if (isForwardRange!R) {
@@ -425,8 +434,7 @@ private bool parseURI(R)(ref R input) pure if (isForwardRange!R) {
     return false;
 }
 
-private bool parsePath(R)(ref R input, bool slash = false, bool spath = false) pure
-        if (isForwardRange!R) {
+private bool parsePath(R)(ref R input, bool slash = false, bool spath = false) pure if (isForwardRange!R) {
     auto path = input.save;
     while (true) {
         while (!path.empty && isPathChar(path.front))
@@ -450,7 +458,7 @@ private bool parsePath(R)(ref R input, bool slash = false, bool spath = false) p
     return slash;
 }
 
-Tok popNextTok(R)(ref R input) pure if (isForwardRange!R) {
+private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRange!R) {
     enum EOF = -1;
     const ch = input.front;
     input.popFront();
@@ -581,9 +589,15 @@ Tok popNextTok(R)(ref R input) pure if (isForwardRange!R) {
             return Tok.GT;
         }
     case '"':
+        if (explodeString)
+            return Tok.STRING_OPEN;
         parseString(input, false);
         return Tok.STRING;
     case '\'':
+        assert(input.front == '\'');
+        input.popFront(); // eat the 2nd '
+        if (explodeString)
+            return Tok.IND_STRING_OPEN;
         parseIndString(input, false);
         return Tok.IND_STRING;
     case '0': .. case '9': // INT or FLOAT or PATH
@@ -669,7 +683,7 @@ unittest {
         "<nixpkgs>" : Tok.SPATH, "<n/p>" : Tok.SPATH,
     ];
     foreach (s, t; tokens) {
-        assert(popNextTok(s) == t, s);
+        assert(popNextTok(s, false) == t, s);
         assert(s.empty, s);
     }
 }
@@ -710,9 +724,9 @@ private Tok tokenizeIdent(in char[] id) pure nothrow {
     }
 }
 
-Token popToken(R)(ref R input) pure if (isForwardRange!R) {
+Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRange!R) {
     const save = input.save;
-    const tok = popNextTok(input);
+    const tok = popNextTok(input, explodeString);
     string body;
     switch (tok) {
     case Tok.IDENTIFIER:
