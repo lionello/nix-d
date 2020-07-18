@@ -45,17 +45,23 @@ enum Tok {
     MULTILINE, // /*…*/
     AT,
     ELLIPSIS, // ...
+    STRING_OPEN, // "…
+    STRING_CLOSE,  // …"
+    IND_STRING_OPEN, // ''…
+    IND_STRING_CLOSE, // …''
 
     // Literals:
     PATH, // …/…
     HPATH, // ~…
     SPATH, // <…>
     URI,
-    STRING, // "…"
-    IND_STRING, // ''…
+    STRING, // "…" (unparsed)
+    IND_STRING, // ''…'' (unparsed)
     FLOAT,
     INT,
     IDENTIFIER,
+    STR, // string content
+    // IND_STR, // indent-string content
 
     // Keywords (identifiers):
     IF,
@@ -149,8 +155,9 @@ struct Token {
     Tok tok;
     union {
         string s;
-        //     NixFloat f;
-        //     NixInt n;
+        // Token[] t;
+        // NixFloat f;
+        // NixInt n;
     }
 
     Loc loc;
@@ -238,16 +245,19 @@ private bool isPathChar(dchar d) pure {
     }
 }
 
-private Tok[] parseNested(R)(ref R input) pure if (isForwardRange!R) {
+private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
+    assert(input.front == '$');
+    input.popFront(); // eat the $
     if (input.front != '{') {
         return null;
     }
     input.popFront(); // eat the {
-    Tok[] tokens;
+    Token[] tokens = [Token(Tok.DOLLAR_CURLY)];
     auto level = 1;
     while (true) {
-        const t = popNextTok(input);
-        switch (t) {
+        const t = popToken(input);
+        tokens ~= t;
+        switch (t.tok) {
         case Tok.DOLLAR_CURLY:
         case Tok.LEFT_CURLY:
             ++level;
@@ -256,11 +266,147 @@ private Tok[] parseNested(R)(ref R input) pure if (isForwardRange!R) {
             if (--level == 0)
                 return tokens;
             break;
+        case Tok.STRING:
+        case Tok.IND_STRING:
+            // TODO: explode?
         default:
             break;
         }
-        tokens ~= t;
     }
+}
+
+unittest {
+    auto r = `${a+{b="x${a}";}.b}`;
+    assert([
+        Token(Tok.DOLLAR_CURLY),
+        Token(Tok.IDENTIFIER, "a"),
+        Token(Tok.ADD),
+        Token(Tok.LEFT_CURLY),
+        Token(Tok.IDENTIFIER, "b"),
+        Token(Tok.ASSIGN),
+        Token(Tok.STRING, `"x${a}"`), // TODO: explode
+        Token(Tok.SEMICOLON),
+        Token(Tok.RIGHT_CURLY),
+        Token(Tok.SELECT),
+        Token(Tok.IDENTIFIER, "b"),
+        Token(Tok.RIGHT_CURLY)] == parseDollar(r));
+    assert(r.empty);
+}
+
+private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
+    switch (ch) {
+    case 'n': return '\n';
+    case 'r': return '\r';
+    case 't': return '\t';
+    default: return ch;
+    }
+}
+
+private Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+    if (popOpen) {
+        assert(input.front == '"');
+        input.popFront();
+    }
+    assert(!input.empty);
+    Token[] tokens = [Token(Tok.STRING_OPEN)];
+    string str;
+    void flush() {
+        if (str) { tokens ~= Token(Tok.STR, str); str = null; }
+    }
+    while (true) {
+        switch (input.front) {
+        case '\\':
+            input.popFront(); // eat the \
+            str ~= unescapeChar(input.front);
+            input.popFront(); // eat the escaped char
+            break;
+        case '"':
+            flush();
+            input.popFront(); // eat the "
+            return tokens ~ Token(Tok.STRING_CLOSE);
+        case '$':
+            if (auto t = parseDollar(input)) {
+                flush();
+                tokens ~= t;
+            } else {
+                str ~= '$';
+            }
+            break;
+        default:
+            str ~= input.front;
+            input.popFront();
+            break;
+        }
+    }
+}
+
+unittest {
+    auto r = `"y${a}$4\\\n"`;
+    assert([
+        Token(Tok.STRING_OPEN),
+        Token(Tok.STR, "y"),
+        Token(Tok.DOLLAR_CURLY),
+        Token(Tok.IDENTIFIER, "a"),
+        Token(Tok.RIGHT_CURLY),
+        Token(Tok.STR, "$4\\\n"),
+        Token(Tok.STRING_CLOSE)] == parseString(r));
+    assert(r.empty);
+}
+
+private Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
+    if (popOpen) {
+        assert(input.front == '\'');
+        input.popFront();
+    }
+    assert(!input.empty);
+    assert(input.front == '\'');
+    input.popFront(); // eat the 2nd '
+    assert(!input.empty);
+    Token[] tokens = [Token(Tok.IND_STRING_OPEN)];
+    string str;
+    void flush() {
+        if (str) { tokens ~= Token(Tok.STR, str); str = null; }
+    }
+    while (true) {
+        switch (input.front) {
+        case '\'':
+            input.popFront(); // eat the '
+            if (input.front == '\'') {
+                input.popFront(); // eat the 2nd '
+                if (input.empty || (input.front != '$'
+                    && input.front != '\\' && input.front != '\'')) {
+                    flush();
+                    return tokens ~ Token(Tok.IND_STRING_CLOSE);
+                }
+                input.popFront();
+            }
+            break;
+        case '$':
+            if (auto t = parseDollar(input)) {
+                flush();
+                tokens ~= t;
+            } else {
+                str ~= '$';
+            }
+            break;
+        default:
+            str ~= input.front;
+            input.popFront();
+            break;
+        }
+    }
+}
+
+unittest {
+    auto r = `''y${a}''`;
+    assert([
+        Token(Tok.IND_STRING_OPEN),
+        Token(Tok.STR, "y"),
+        Token(Tok.DOLLAR_CURLY),
+        Token(Tok.IDENTIFIER, "a"),
+        Token(Tok.RIGHT_CURLY),
+        Token(Tok.IND_STRING_CLOSE)] == parseIndString(r));
+    assert(r.empty);
 }
 
 private bool parseURI(R)(ref R input) pure if (isForwardRange!R) {
@@ -435,48 +581,11 @@ Tok popNextTok(R)(ref R input) pure if (isForwardRange!R) {
             return Tok.GT;
         }
     case '"':
-        while (true) {
-            switch (input.front) {
-            case '\\':
-                input.popFront(); // eat the /
-                input.popFront(); // eat the escaped char
-                break;
-            case '"':
-                input.popFront(); // eat the "
-                return Tok.STRING;
-            case '$':
-                input.popFront(); // eat the $
-                parseNested(input);
-                break;
-            default:
-                input.popFront();
-                break;
-            }
-        }
+        parseString(input, false);
+        return Tok.STRING;
     case '\'':
-        assert(input.front == '\'');
-        input.popFront(); // eat the 2nd '
-        while (true) {
-            switch (input.front) {
-            case '\'':
-                input.popFront(); // eat the '
-                if (input.front == '\'') {
-                    input.popFront(); // eat the 2nd '
-                    if (input.empty || (input.front != '$'
-                            && input.front != '\\' && input.front != '\''))
-                        return Tok.IND_STRING;
-                    input.popFront();
-                }
-                break;
-            case '$':
-                input.popFront(); // eat the $
-                parseNested(input);
-                break;
-            default:
-                input.popFront();
-                break;
-            }
-        }
+        parseIndString(input, false);
+        return Tok.IND_STRING;
     case '0': .. case '9': // INT or FLOAT or PATH
         if (parsePath(input))
             return Tok.PATH;
@@ -574,7 +683,7 @@ unittest {
     static assert(before(all, all[1 .. $]) == all[0 .. 1]);
 }
 
-private Tok tokenizeIdent(string id) pure nothrow {
+private Tok tokenizeIdent(in char[] id) pure nothrow {
     switch (id) {
     case "assert":
         return Tok.ASSERT;
@@ -604,8 +713,28 @@ private Tok tokenizeIdent(string id) pure nothrow {
 Token popToken(R)(ref R input) pure if (isForwardRange!R) {
     const save = input.save;
     const tok = popNextTok(input);
-    string body = before(save, input);
-    // debug writeln(tok, body);
+    string body;
+    switch (tok) {
+    case Tok.IDENTIFIER:
+    case Tok.STRING:
+    case Tok.IND_STRING:
+    case Tok.STR:
+    // case Tok.IND_STR:
+    case Tok.INT:
+    case Tok.FLOAT:
+    case Tok.PATH:
+    case Tok.SPATH:
+    case Tok.HPATH:
+    case Tok.URI:
+    case Tok.WHITESPACE:
+    case Tok.COMMENT:
+    case Tok.MULTILINE:
+        body = before(save, input);
+        // debug writeln(tok, body);
+        break;
+    default:
+        break;
+    }
     return Token(tok == Tok.IDENTIFIER ? tokenizeIdent(body) : tok, body);
 }
 

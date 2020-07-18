@@ -417,9 +417,6 @@ Expr parseSimple(R)(ref TokenRange!R input) pure {
         assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
         input.popFront(); // eat the }
         return binds;
-        // case Tok.true_:
-        // case Tok.false_:
-        // case Tok.NULL:
     case Tok.IDENTIFIER:
         input.popFront();
         return new ExprVar(t.s);
@@ -492,7 +489,8 @@ unittest {
     assert(cast(ExprPath) parse("~/a"));
     assert(cast(ExprBinaryOp) parse("<a>"));
     assert(cast(ExprVar) parse("libcap/* bla*/"));
-    assert(cast(ExprString) parse(`"4n${"2"}"`));
+    // assert(cast(ExprBinaryOp) parse(`"4n${"2"}"`));
+    // assert(cast(ExprBinaryOp) parse(`''4n${"2"}''`));
 }
 
 Formals parseFormals(R)(ref TokenRange!R input) pure {
@@ -729,7 +727,18 @@ Expr parseOp(R)(ref TokenRange!R input) pure {
     }
 }
 
+private void assertThrow(E=Error,T)(lazy T dg, in char[] msg = "Expected thrown "~E.stringof~", but got "~T.stringof) {
+    try {
+        dg();
+    } catch(E) {
+        return;
+    }
+    assert(false, msg);
+}
+
 unittest {
+    import core.exception : AssertError;
+
     auto parse(string s) {
         auto tr = TokenRange!string(s);
         auto e = parseOp(tr);
@@ -746,8 +755,8 @@ unittest {
     with(cast(ExprBinaryOp) parse("2 + 3 * 4")) { assert(op == Tok.ADD); }
     with(cast(ExprBinaryOp) parse("2 * 3 + 4 * 4")) { assert(op == Tok.ADD); }
     with(cast(ExprBinaryOp) parse("2 * 3 * 4 + 4")) { assert(op == Tok.ADD); }
-    // assert(parse("2 == 3 == 4"));
-    // assert(parse("2 != 3 != 4"));
+    assertThrow(parse("2 == 3 == 4"));
+    assertThrow(parse("2 != 3 != 4"));
 }
 
 Expr parseApp(R)(ref TokenRange!R input) pure {
