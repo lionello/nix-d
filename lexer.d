@@ -376,7 +376,7 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
     while (true) {
         switch (input.front) {
         case '\'':
-            input.popFront(); // eat the '
+            input.popFront(); // eat the 1st '
             if (input.front == '\'') {
                 input.popFront(); // eat the 2nd '
                 switch (input.empty ? EOF : input.front) {
@@ -396,7 +396,7 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
                     return tokens ~ Token(Tok.IND_STRING_CLOSE);
                 }
                 input.popFront(); // eat the escaped char
-            }
+            } else str ~= input.front;
             break;
         case '$':
             if (auto t = parseDollar(input)) {
