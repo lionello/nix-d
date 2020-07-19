@@ -462,9 +462,10 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront();
         return parseStr(tokens);
     case Tok.IND_STRING:
+        // TODO: strip indentation
+        auto tokens = parseIndString(input.front.s);
         input.popFront();
-        // TODO: unescape/explode/strip
-        return new ExprString(t.s);
+        return parseStr(tokens);
     default:
         return null;
     }
@@ -492,12 +493,12 @@ unittest {
     assert(cast(ExprBinaryOp) parse("<a>"));
     assert(cast(ExprVar) parse("libcap/* bla*/"));
     assert(cast(ExprBinaryOp) parse(`"4n${"2"}"`));
-    // assert(cast(ExprBinaryOp) parse(`''4n${"2"}''`));
+    assert(cast(ExprBinaryOp) parse(`''4n${"2"}''`));
 }
 
 private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
-    assert(input.front.tok == Tok.STRING_OPEN);
-    input.popFront(); // eat the "
+    assert(input.front.tok == Tok.STRING_OPEN || input.front.tok == Tok.IND_STRING_OPEN);
+    input.popFront(); // eat the " or ''
     Expr[] es;
     while (true) {
         switch(input.front.tok) {
@@ -505,8 +506,9 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
             es ~= new ExprString(input.front.s);
             input.popFront(); // eat the str
             break;
+        case Tok.IND_STRING_CLOSE:
         case Tok.STRING_CLOSE:
-            input.popFront(); // eat the "
+            input.popFront(); // eat the " or ''
             if (es.length == 1 && cast(ExprString)es[0]) return es[0];
             // Always start with an empty string to force coercion
             Expr concat = new ExprString("");
