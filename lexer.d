@@ -1,7 +1,11 @@
 module nix.lexer;
 
-debug import std.stdio : writeln;
 public import std.range;
+debug import std.stdio : writeln;
+import std.range.primitives : isForwardRange, ElementType;
+import std.ascii : isWhite, isDigit;
+
+private enum EOF = -1;
 
 enum Tok {
     ERROR,
@@ -163,16 +167,12 @@ struct Token {
     Loc loc;
 }
 
-import std.range.primitives : isForwardRange;
-import std.ascii : isWhite, isDigit;
-
 // https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L91
 private bool isIdChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
-    case '0':
-            .. case '9':
+    case '0': .. case '9':
     case '_':
     case '\'':
     case '-':
@@ -187,8 +187,7 @@ private bool isUriSchemeChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
-    case '0':
-            .. case '9':
+    case '0': .. case '9':
     case '+':
     case '-':
     case '.':
@@ -203,8 +202,7 @@ private bool isUriPathChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
-    case '0':
-            .. case '9':
+    case '0': .. case '9':
     case '%':
     case '/':
     case '?':
@@ -233,8 +231,7 @@ private bool isPathChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
-    case '0':
-            .. case '9':
+    case '0': .. case '9':
     case '.':
     case '_':
     case '-':
@@ -382,12 +379,23 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
             input.popFront(); // eat the '
             if (input.front == '\'') {
                 input.popFront(); // eat the 2nd '
-                if (input.empty || (input.front != '$'
-                    && input.front != '\\' && input.front != '\'')) {
+                switch (input.empty ? EOF : input.front) {
+                case '$':
+                    str ~= '$';
+                    break;
+                case '\'':
+                    str ~= "''"; // ''' => ''
+                    break;
+                case '\\':
+                    input.popFront(); // eat the \
+                    str ~= unescapeChar(input.front);
+                    break;
+                case EOF:
+                default:
                     flush();
                     return tokens ~ Token(Tok.IND_STRING_CLOSE);
                 }
-                input.popFront();
+                input.popFront(); // eat the escaped char
             }
             break;
         case '$':
@@ -407,13 +415,14 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
 }
 
 unittest {
-    auto r = `''y${a}''`;
+    auto r = `''y${a}'''c''$''\n''`;
     assert([
         Token(Tok.IND_STRING_OPEN),
         Token(Tok.STR, "y"),
         Token(Tok.DOLLAR_CURLY),
         Token(Tok.IDENTIFIER, "a"),
         Token(Tok.RIGHT_CURLY),
+        Token(Tok.STR, "''c$\n"),
         Token(Tok.IND_STRING_CLOSE)] == parseIndString(r));
     assert(r.empty, r);
 }
@@ -459,7 +468,6 @@ private bool parsePath(R)(ref R input, bool slash = false, bool spath = false) p
 }
 
 private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRange!R) {
-    enum EOF = -1;
     const ch = input.front;
     input.popFront();
     switch (ch) {
@@ -815,4 +823,11 @@ unittest {
     assert(!s.empty);
     assert(s.front.tok == Tok.LEFT_CURLY);
     assert(s.loc.line == 1);
+}
+
+public enum bool isTokenRange(R) = isForwardRange!R && is(ElementType!R == Token);
+
+unittest {
+    static assert(isTokenRange!(TokenRange!string));
+    static assert(!isTokenRange!string);
 }

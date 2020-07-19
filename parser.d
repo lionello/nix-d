@@ -294,7 +294,7 @@ class ExprAssert : Expr {
     }
 }
 
-ExprList parseList(R)(ref TokenRange!R input) pure {
+ExprList parseList(R)(ref R input) pure if (isTokenRange!R) {
     Expr[] elems;
     while (input.front.tok != Tok.RIGHT_BRACKET) {
         elems ~= parseSelect(input);
@@ -302,7 +302,7 @@ ExprList parseList(R)(ref TokenRange!R input) pure {
     return new ExprList(elems);
 }
 
-AttrPath parseAttrs(R)(ref TokenRange!R input) pure {
+AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
     AttrPath ap;
     while (true) {
         auto an = parseAttr(input);
@@ -313,7 +313,7 @@ AttrPath parseAttrs(R)(ref TokenRange!R input) pure {
     return ap;
 }
 
-ExprAttrs parseBinds(R)(ref TokenRange!R input) pure {
+ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
     auto binds = new ExprAttrs();
     while (!input.empty) {
         switch (input.front.tok) {
@@ -384,7 +384,7 @@ unittest {
     assert(parse("false=2;").attrs.length == 1);
 }
 
-Expr parseSimple(R)(ref TokenRange!R input) pure {
+private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     const t = input.front;
     switch (t.tok) {
     case Tok.LET:
@@ -427,7 +427,7 @@ Expr parseSimple(R)(ref TokenRange!R input) pure {
         input.popFront(); // eat the ]
         return e;
     case Tok.LEFT_PARENS:
-        input.popFront();
+        input.popFront(); // eat the (
         auto e = parseExpression(input);
         debug writeln("parseSimple: parseExpression returned ", e);
         assert(e, input.front.s);
@@ -455,10 +455,12 @@ Expr parseSimple(R)(ref TokenRange!R input) pure {
         input.popFront();
         auto findNixPath = new ExprBinaryOp(Tok.APP, new ExprVar("__findFile"), new ExprVar("__nixPath"));
         return new ExprBinaryOp(Tok.APP, findNixPath, new ExprString(t.s));
+    case Tok.STRING_OPEN:
+        return parseStr(input);
     case Tok.STRING:
+        auto tokens = parseString(input.front.s);
         input.popFront();
-        // TODO: unescape/explode
-        return new ExprString(t.s);
+        return parseStr(tokens);
     case Tok.IND_STRING:
         input.popFront();
         // TODO: unescape/explode/strip
@@ -489,11 +491,55 @@ unittest {
     assert(cast(ExprPath) parse("~/a"));
     assert(cast(ExprBinaryOp) parse("<a>"));
     assert(cast(ExprVar) parse("libcap/* bla*/"));
-    // assert(cast(ExprBinaryOp) parse(`"4n${"2"}"`));
+    assert(cast(ExprBinaryOp) parse(`"4n${"2"}"`));
     // assert(cast(ExprBinaryOp) parse(`''4n${"2"}''`));
 }
 
-Formals parseFormals(R)(ref TokenRange!R input) pure {
+private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
+    assert(input.front.tok == Tok.STRING_OPEN);
+    input.popFront(); // eat the "
+    Expr[] es;
+    while (true) {
+        switch(input.front.tok) {
+        case Tok.STR:
+            es ~= new ExprString(input.front.s);
+            input.popFront(); // eat the str
+            break;
+        case Tok.STRING_CLOSE:
+            input.popFront(); // eat the "
+            if (es.length == 1 && cast(ExprString)es[0]) return es[0];
+            // Always start with an empty string to force coercion
+            Expr concat = new ExprString("");
+            foreach (e; es[0..$]) {
+                concat = new ExprBinaryOp(Tok.ADD, concat, e);
+            }
+            return concat;
+        case Tok.DOLLAR_CURLY:
+            input.popFront(); // eat the ${
+            es ~= parseExpression(input);
+            import std.conv:to;
+            assert(input.front.tok == Tok.RIGHT_CURLY, to!string(input.front.tok));
+            input.popFront(); // eat the }
+            break;
+        default:
+            assert(0);
+        }
+    }
+}
+
+unittest {
+    auto r = [
+        Token(Tok.STRING_OPEN),
+        Token(Tok.DOLLAR_CURLY),
+        Token(Tok.INT, "2"),
+        Token(Tok.RIGHT_CURLY),
+        Token(Tok.STRING_CLOSE)
+    ];
+    assert(cast(ExprBinaryOp) parseStr(r));
+    assert(r.empty);
+}
+
+private Formals parseFormals(R)(ref R input) pure if (isTokenRange!R) {
     auto f = new Formals;
     while (true) {
         switch (input.front.tok) {
@@ -540,7 +586,7 @@ unittest {
     assert(parse("a,b").elems == [Formal("a"), Formal("b")]);
 }
 
-Expr parseExpression(R)(ref TokenRange!R input) pure {
+Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
     const t = input.front;
     switch (t.tok) {
     case Tok.IDENTIFIER: // args@ or args: or func val or set.attr
@@ -634,7 +680,7 @@ Expr parseExpression(R)(ref TokenRange!R input) pure {
     }
 }
 
-Expr parseIf(R)(ref TokenRange!R input) pure {
+private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
     switch (input.front.tok) {
     case Tok.IF:
         input.popFront(); // eat the if
@@ -654,8 +700,8 @@ Expr parseIf(R)(ref TokenRange!R input) pure {
     }
 }
 
-Expr parseOp(R)(ref TokenRange!R input) pure {
-    debug writeln("parseOp ", input.front.s);
+private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
+    debug writeln("parseOp ", input.front.tok, input.front.s);
     switch (input.front.tok) {
     case Tok.NOT:
         input.popFront(); // eat the !
@@ -737,8 +783,6 @@ private void assertThrow(E=Error,T)(lazy T dg, in char[] msg = "Expected thrown 
 }
 
 unittest {
-    import core.exception : AssertError;
-
     auto parse(string s) {
         auto tr = TokenRange!string(s);
         auto e = parseOp(tr);
@@ -759,8 +803,8 @@ unittest {
     assertThrow(parse("2 != 3 != 4"));
 }
 
-Expr parseApp(R)(ref TokenRange!R input) pure {
-    debug writeln("parseApp ", input.front.s);
+private Expr parseApp(R)(ref R input) pure if (isTokenRange!R) {
+    debug writeln("parseApp ", input.front.tok, input.front.s);
     auto select = parseSelect(input);
     debug writeln("parseApp: parseSelect returned ", select);
     if (!select)
@@ -786,7 +830,7 @@ unittest {
     assert(parse("a.b c"));
 }
 
-Expr parseSelect(R)(ref TokenRange!R input) pure {
+private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
     auto arg = parseSimple(input);
     switch (input.front.tok) {
     case Tok.SELECT:
@@ -811,7 +855,7 @@ Expr parseSelect(R)(ref TokenRange!R input) pure {
     }
 }
 
-AttrName parseAttr(R)(ref TokenRange!R input) pure {
+AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
     switch (input.front.tok) {
     case Tok.DOLLAR_CURLY:
         input.popFront(); // eat the ${
@@ -830,7 +874,7 @@ AttrName parseAttr(R)(ref TokenRange!R input) pure {
     }
 }
 
-AttrPath parseAttrPath(R)(ref TokenRange!R input) pure {
+AttrPath parseAttrPath(R)(ref R input) pure if (isTokenRange!R) {
     auto an = parseAttr(input);
     if (an.ident is null && an.expr is null)
         return null;
