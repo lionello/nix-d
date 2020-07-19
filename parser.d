@@ -294,7 +294,7 @@ class ExprAssert : Expr {
     }
 }
 
-ExprList parseList(R)(ref R input) pure if (isTokenRange!R) {
+private ExprList parseList(R)(ref R input) pure if (isTokenRange!R) {
     Expr[] elems;
     while (input.front.tok != Tok.RIGHT_BRACKET) {
         elems ~= parseSelect(input);
@@ -302,7 +302,7 @@ ExprList parseList(R)(ref R input) pure if (isTokenRange!R) {
     return new ExprList(elems);
 }
 
-AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
+private AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
     AttrPath ap;
     while (true) {
         auto an = parseAttr(input);
@@ -313,7 +313,7 @@ AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
     return ap;
 }
 
-ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
+private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
     auto binds = new ExprAttrs();
     while (!input.empty) {
         switch (input.front.tok) {
@@ -588,6 +588,7 @@ unittest {
     assert(parse("a,b").elems == [Formal("a"), Formal("b")]);
 }
 
+// Parse the tokens from the given range into an expression tree.
 Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
     const t = input.front;
     switch (t.tok) {
@@ -857,7 +858,7 @@ private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
     }
 }
 
-AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
+private AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
     switch (input.front.tok) {
     case Tok.DOLLAR_CURLY:
         input.popFront(); // eat the ${
@@ -876,7 +877,7 @@ AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
     }
 }
 
-AttrPath parseAttrPath(R)(ref R input) pure if (isTokenRange!R) {
+private AttrPath parseAttrPath(R)(ref R input) pure if (isTokenRange!R) {
     auto an = parseAttr(input);
     if (an.ident is null && an.expr is null)
         return null;

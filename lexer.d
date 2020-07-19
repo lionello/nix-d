@@ -7,6 +7,7 @@ import std.ascii : isWhite, isDigit;
 
 private enum EOF = -1;
 
+/// Lexical tokens
 enum Tok {
     ERROR,
 
@@ -80,6 +81,7 @@ enum Tok {
     OR_KW,
 }
 
+/// Associativity of operators
 enum Associativity {
     NONE,
     LEFT,
@@ -131,6 +133,7 @@ private auto precedence(Tok tok) pure {
     }
 }
 
+/// Returns the relative associativity of two given operators
 Associativity associativity(Tok left, Tok right) pure {
     const lp = left.precedence;
     const rp = right.precedence;
@@ -151,10 +154,12 @@ unittest {
     assert(associativity(Tok.CONCAT, Tok.CONCAT) == Associativity.RIGHT);
 }
 
+/// Location in source file
 struct Loc {
     uint line; //, col;
 }
 
+/// A lexed token
 struct Token {
     Tok tok;
     union {
@@ -307,6 +312,7 @@ private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
     }
 }
 
+/// Parse a string literal into separated tokens
 Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
     Token[] tokens;
     if (popOpen) {
@@ -359,6 +365,7 @@ unittest {
     assert(r.empty, r);
 }
 
+/// Parse a indent-string literal into separated tokens
 Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
     Token[] tokens;
     if (popOpen) {
@@ -732,6 +739,7 @@ private Tok tokenizeIdent(in char[] id) pure nothrow {
     }
 }
 
+/// Pop the next token from the given forward range
 Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRange!R) {
     const save = input.save;
     const tok = popNextTok(input, explodeString);
@@ -825,6 +833,7 @@ unittest {
     assert(s.loc.line == 1);
 }
 
+/// Trait to test whether a type implements a forward range for `Token`s.
 public enum bool isTokenRange(R) = isForwardRange!R && is(ElementType!R == Token);
 
 unittest {
