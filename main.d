@@ -1,6 +1,7 @@
 module nix.main;
 
 import std.stdio : writeln, write;
+import std.conv:to;
 
 import nix.parser;
 
@@ -22,7 +23,7 @@ private Value prim_binOp(string OP)(in Value[] args...) pure if (__traits(compil
             return Value(mixin("args[0].fpoint" ~ OP ~ "args[1].fpoint"));
         case Type.Int:
             return Value(mixin("args[0].fpoint" ~ OP ~ "args[1].integer"));
-        default: assert(0);
+        default: assert(0, "cannot add to float");
         }
     case Type.Int:
         switch(args[1].type) {
@@ -30,7 +31,14 @@ private Value prim_binOp(string OP)(in Value[] args...) pure if (__traits(compil
             return Value(mixin("args[0].integer" ~ OP ~ "args[1].fpoint"));
         case Type.Int:
             return Value(mixin("args[0].integer" ~ OP ~ "args[1].integer"));
-        default: assert(0);
+        default: assert(0, "cannot add to integer");
+        }
+    case Type.Path:
+        // TODO: support path + path
+    case Type.String:
+        static if (OP == "+") {
+        assert(args[1].type == Type.String, "cannot coerce to string");
+        return Value(args[0].s ~ args[1].s);
         }
     default: assert(0, "No operator "~OP~" for type "~prim_typeOf(args[0]).s);
     }
@@ -41,6 +49,7 @@ unittest {
     assert(prim_binOp!"/"(Value(3), Value(2.0)) == Value(1.5));
     assert(prim_binOp!"-"(Value(1.0), Value(2)) == Value(-1.0));
     assert(prim_binOp!"+"(Value(1.0), Value(2.0)) == Value(3.0));
+    assert(prim_binOp!"+"(Value("a"), Value("b")) == Value("ab"));
 }
 
 private Value prim_typeOf(in Value[] args...) pure {
@@ -140,7 +149,7 @@ private const Env staticBaseEnv;
 
 static this() {
     static Value notImplemented(in Value[] args...) pure {
-        assert(0);
+        assert(0, "not implemented");
     }
 
     Bindings globals = [
@@ -206,7 +215,6 @@ static this() {
     Bindings builtins;
     foreach (k, v; globals) {
         import std.string : strip;
-
         builtins[strip(k, "_")] = v;
     }
     globals["builtins"] = builtins["builtins"] = Value(builtins);
@@ -379,6 +387,29 @@ enum Type : byte {
     // Error,
 }
 
+private string escapeString(string s) @safe pure nothrow {
+    char[] buf;
+    buf.reserve(s.length + 2);
+    buf ~= '"';
+    foreach (c; s) {
+        switch (c) {
+        case '\\': buf ~= `\\`; break;
+        case '$': buf ~= `\$`; break;
+        case '"': buf ~= `\"`; break;
+        case '\t': buf ~= `\t`; break;
+        case '\n': buf ~= `\n`; break;
+        case '\r': buf ~= `\r`; break;
+        default: buf ~= c; break;
+        }
+    }
+    buf ~= '"';
+    return buf;
+}
+
+unittest {
+    assert(escapeString("\\$\"\n\t\r") == `"\\\$\"\n\t\r"`);
+}
+
 struct Value {
     static auto ZERO = Value(0);
     static auto false_ = Value(false);
@@ -391,7 +422,7 @@ struct Value {
             // string[] context; TODO
         }
 
-        string path;
+        // string path;
         NixInt integer;
         NixFloat fpoint;
         bool boolean;
@@ -461,7 +492,7 @@ struct Value {
         this.list = [left, right];
     }
 
-    @property real number() pure const {
+    @property real number() pure const nothrow {
         return type == Type.Int ? integer : (type == Type.Float ? fpoint : real.nan);
     }
 
@@ -475,11 +506,11 @@ struct Value {
             return type == v.type;
         case Type.Path:
         case Type.String:
-            return s == v.s;
+            return (v.type == Type.String || v.type == Type.Path) && s == v.s;
         case Type.Int:
-            return integer == v.integer;
+            return integer == v.number;
         case Type.Float:
-            return fpoint == v.fpoint;
+            return fpoint == v.number;
         case Type.Bool:
             return type == v.type && boolean == v.boolean;
         case Type.PrimOpApp:
@@ -495,6 +526,62 @@ struct Value {
             return type == v.type && primOp == v.primOp && env == v.env;
         }
     }
+
+    string toString() const {
+        final switch (type) {
+        case Type.Null:
+            return "null";
+        case Type.Path:
+        case Type.String:
+            return escapeString(s);
+        case Type.Int:
+            return to!string(integer);
+        case Type.Float:
+            return to!string(fpoint);
+        case Type.Bool:
+            return boolean ? "true" : "false";
+        case Type.List:
+            auto s = "[ ";
+            foreach (e; list) s ~= e.toString() ~ ' ';
+            return s ~ ']';
+        case Type.Attrs:
+            auto s = "{ ";
+            foreach (k, v; attrs) s ~= k ~ " = " ~ v.toString() ~ "; ";
+            return s ~ '}';
+        case Type.Lambda:
+            return "<LAMBDA>";
+        case Type.Thunk:
+            return "<CODE>";
+        case Type.PrimOp:
+            return "<PRIMOP>";
+        case Type.PrimOpApp:
+            return "<PRIMOP-APP>";
+        }
+    }
+}
+
+unittest {
+    assert(Value() == Value());
+    assert(Value() != Value(1));
+    assert(Value(2) == Value(2.0));
+    assert(Value(2.5) != Value(2));
+    assert(Value("a") == Value("ba"[1..$]));
+    assert(Value("a") != Value());
+    assert(Value(true) == Value(true));
+    assert(Value(false) == Value(false));
+    assert(Value(false) != Value(true));
+    assert(Value([Value(3),Value()]) == Value([Value(3.0),Value()]));
+    assert(Value(["n":Value(4)]) == Value(["n":Value(4.0)]));
+    assert(Value(["n":Value()]) != Value(["k":Value()]));
+
+    assert(Value().toString() == "null");
+    assert(Value(2).toString() == "2");
+    assert(Value(2.5).toString() == "2.5");
+    assert(Value("hello\n").toString() == `"hello\n"`);
+    assert(Value(true).toString() == "true");
+    assert(Value(false).toString() == "false");
+    assert(Value([Value()]).toString() == "[ null ]");
+    assert(Value(["n":Value()]).toString() == "{ n = null; }");
 }
 
 class Thunker : Visitor {
@@ -740,7 +827,7 @@ class Evaluator : Visitor {
         const(Env)* dynamicEnv = env;
         Bindings attrs;
         if (e.recursive) {
-            assert(0);
+            assert(0, "not implemented: rec");
             // auto overrides = "__overrides" in e.attrs;
 
             // auto newEnv = Env(env, false, attrs);
@@ -806,8 +893,7 @@ class Evaluator : Visitor {
     void visit(ExprWith e) {
         debug writeln(e.attrs);
         auto att = visit(e.attrs);
-        import std.conv:to;
-        assert(att.type == Type.Attrs, to!string(att.type));
+        assert(att.type == Type.Attrs, to!string(att.type) ~ ", expected attrs");
         const newEnv = Env(env, att.attrs);// TODO: make lazy
         env = &newEnv;
         visit(e.body);
@@ -855,7 +941,6 @@ unittest {
     assert(eval(new ExprFloat(1.1)) == Value(1.1));
     assert(eval(new ExprInt(42)) == Value(42));
     assert(eval(new ExprString("foo")) == Value("foo"));
-    // assert(eval(new ExprString("${''foo''}'")) == Value("foo"));
     assert(eval(new ExprPath("fo/o")) == Value("fo/o"));
     assert(eval(false_) == Value(false));
     assert(eval(new ExprVar("null")) == Value());
@@ -879,7 +964,7 @@ void main(string[] args) {
             writeln(f, ", error on line ", tr.loc.line);
         auto eval = new Evaluator;
         parseExpression(tr).accept(eval);
-        writeln(eval.value.type);
+        writeln(eval.value);
         writeln("Done.");
         // while (!s.empty) {
         //     const t = popNextTok(s);

@@ -712,8 +712,13 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
         if (auto bin = cast(BinaryExpr) expr) {
             const assoc = associativity(Tok.NOT, bin.operator);
             assert(assoc != Associativity.NONE, "Non-associative");
-            assert(assoc == Associativity.RIGHT, "TODO");
+            if (assoc == Associativity.LEFT) {
+                // left-associative
+                bin.left = new ExprOpNot(bin.left);
+                return bin;
+            }
         }
+        // right-associative
         return new ExprOpNot(expr);
     case Tok.NEGATE:
         input.popFront(); // eat the -
@@ -721,8 +726,13 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
         if (auto bin = cast(BinaryExpr) expr) {
             const assoc = associativity(Tok.NEGATE, bin.operator);
             assert(assoc != Associativity.NONE, "Non-associative");
-            assert(assoc == Associativity.RIGHT, "TODO");
+            if (assoc == Associativity.LEFT) {
+                // left-associative
+                bin.left = new ExprBinaryOp(Tok.SUB, new ExprInt(0), bin.left);
+                return bin;
+            }
         }
+        // right-associative
         return new ExprBinaryOp(Tok.SUB, new ExprInt(0), expr);
     default:
         auto left = parseApp(input);
@@ -794,6 +804,9 @@ unittest {
     }
 
     assert(cast(ExprBinaryOp) parse("a + b"));
+    assert(cast(ExprBinaryOp) parse("a && b"));
+    assert(cast(ExprBinaryOp) parse("!a && b"));
+    assert(cast(ExprBinaryOp) parse("-a + b"));
     assert(cast(ExprBinaryOp) parse("a + b - c"));
     assert(cast(ExprOpHasAttr) parse("a ? b"));
     assert(cast(ExprBinaryOp) parse("a ? b || c"));
