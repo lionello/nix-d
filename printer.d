@@ -35,54 +35,54 @@ class Printer : Visitor {
         }
     }
 
-    void visit(Expr e) {
+    void visit(in Expr e) {
         if (e)
             e.accept(this);
     }
 
-    void visit(ExprOpNot e) {
+    void visit(in ExprOpNot e) {
         write("!");
         visit(e.expr);
     }
 
-    void visit(ExprBinaryOp e) {
+    void visit(in ExprBinaryOp e) {
         visit(e.left);
         write(ops[e.op]);
         visit(e.right);
     }
 
-    void visit(ExprInt e) {
+    void visit(in ExprInt e) {
         write(e.n);
     }
 
-    void visit(ExprFloat e) {
+    void visit(in ExprFloat e) {
         write(e.f);
     }
 
-    void visit(ExprString e) {
+    void visit(in ExprString e) {
         write(e.s);
     }
 
-    void visit(ExprPath e) {
+    void visit(in ExprPath e) {
         write(e.p);
     }
 
-    void visit(ExprVar e) {
+    void visit(in ExprVar e) {
         write(e.name);
     }
 
-    void visit(ExprSelect e) {
+    void visit(in ExprSelect e) {
         visit(e.left);
         writeAttrPath(e.ap);
     }
 
-    void visit(ExprOpHasAttr e) {
+    void visit(in ExprOpHasAttr e) {
         visit(e.left);
         write(" ? ");
         writeAttrPath(e.ap);
     }
 
-    void visit(ExprAttrs e) {
+    void visit(in ExprAttrs e) {
         write("{");
         foreach (k, v; e.attrs) {
             write(k, "=");
@@ -92,7 +92,7 @@ class Printer : Visitor {
         write("}");
     }
 
-    void visit(ExprList e) {
+    void visit(in ExprList e) {
         write("[ ");
         foreach (k; e.elems) {
             visit(k);
@@ -101,33 +101,35 @@ class Printer : Visitor {
         write("]");
     }
 
-    void visit(ExprLambda e) {
-        write(e.arg, "@{");
+    void visit(in ExprLambda e) {
+        write(e.arg, "@");
         if (e.formals) {
+            write("{");
             foreach (a; e.formals.elems)
                 write(a.name, ",");
             if (e.formals.ellipsis)
                 write("...");
+            write("}");
         }
-        write("}:");
+        write(":");
         visit(e.body);
     }
 
-    void visit(ExprLet e) {
+    void visit(in ExprLet e) {
         write("let ");
         visit(e.attrs);
         write(" in ");
         visit(e.body);
     }
 
-    void visit(ExprWith e) {
+    void visit(in ExprWith e) {
         write("with ");
         visit(e.attrs);
         writeln(";");
         visit(e.body);
     }
 
-    void visit(ExprIf e) {
+    void visit(in ExprIf e) {
         write("if ");
         visit(e.cond);
         write(" then ");
@@ -136,7 +138,7 @@ class Printer : Visitor {
         visit(e.else_);
     }
 
-    void visit(ExprAssert e) {
+    void visit(in ExprAssert e) {
         writeln("assert ");
         visit(e.cond);
         writeln(';');

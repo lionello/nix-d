@@ -1,48 +1,96 @@
 module nix.evaluator;
 
-import nix.parser;
+import nix.value;
 
 import std.stdio : writeln, write;
 import std.conv : to;
-import std.format : printFloat, singleSpec;
 
-alias Bindings = Value[string];
-alias PrimOp = Value function(in Value[] args...) pure;
-
-private struct Env {
-    const(Env)* up;
-    const(Bindings) vars;
-    // ExprWith hasWith;
+Value mkThunk(in Expr e, in ref Env env) /*pure*/ {
+    return Value(e, env);
 }
 
-private Value prim_binOp(string OP)(in Value[] args...) pure if (__traits(compiles,"1"~OP~"2.2")) {
-    assert(args.length == 2);
-    switch (args[0].type) {
-    case Type.Float:
-        switch(args[1].type) {
-        case Type.Float:
-            return Value(mixin("args[0].fpoint" ~ OP ~ "args[1].fpoint"));
-        case Type.Int:
-            return Value(mixin("args[0].fpoint" ~ OP ~ "args[1].integer"));
-        default: assert(0, "cannot add to float");
+Value maybeThunk(in Expr e, in ref Env env) /*pure*/ {
+    // TODO: don't thunk values or known vars; use Thunker
+    return mkThunk(e, env);
+}
+
+private Value callPrimOp(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+    return Value();
+}
+
+private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+    auto f = forceValue(fun, pos);
+    switch(f.type) {
+    case Type.PrimOp:
+    case Type.PrimOpApp:
+        return callPrimOp(f, arg, pos);
+    case Type.Attrs:
+        const functor = f.attrs["__functor"];
+        const v2 = callFunction(functor, f, pos);
+        return callFunction(v2, arg, pos);
+    case Type.Lambda:
+        Bindings b;
+        auto env2 = Env(f.lambdaEnv, b);
+        if (!f.lambda.formals) {
+            // add f.lambda.arg to the new env
+            b[f.lambda.arg] = arg;
+        } else {
+            const args = forceAttrs(arg, pos);
+            // For each formal argument, get the actual argument.  If
+            // there is no matching actual argument but the formal
+            // argument has a default, use the default.
+            int attrsUsed;
+            foreach (formal; f.lambda.formals.elems) {
+                const j = formal.name in args.attrs;
+                if (!j) {
+                    assert(formal.def, "Lambda called without required argument "~formal.name);
+                    b[formal.name] = maybeThunk(formal.def, env2);
+                } else {
+                    attrsUsed++;
+                    b[formal.name] = *j;
+                }
+            }
+            if (!f.lambda.formals.ellipsis && attrsUsed != args.attrs.length) {
+                foreach (const k, v; args.attrs)
+                    assert(0, "Lambda called with unexpected argument "~k);
+                assert(0);
+            }
         }
-    case Type.Int:
-        switch(args[1].type) {
-        case Type.Float:
-            return Value(mixin("args[0].integer" ~ OP ~ "args[1].fpoint"));
-        case Type.Int:
-            return Value(mixin("args[0].integer" ~ OP ~ "args[1].integer"));
-        default: assert(0, "cannot add to integer");
-        }
-    case Type.Path:
-        // TODO: support path + path
-    case Type.String:
-        static if (OP == "+") {
-        assert(args[1].type == Type.String, "cannot coerce to string");
-        return Value(args[0].s ~ args[1].s);
-        }
-    default: assert(0, "No operator "~OP~" for type "~prim_typeOf(args[0]).s);
+        return eval(f.lambda, &env2);
+    default:
+        assert(0, "attempt to call something which is not a function");
     }
+}
+
+private Value forceString(in Value v, in Loc pos) /*pure*/ {
+    auto value = forceValue(v, pos);
+    assert(value.type == Type.String, "value is "~typeOf(value)~" while a string was expected");
+    return value;
+}
+
+private Value forceAttrs(in Value v, in Loc pos) /*pure*/ {
+    auto value = forceValue(v, pos);
+    assert(value.type == Type.Attrs, "value is "~typeOf(value)~" while a set was expected");
+    return value;
+}
+
+private Value forceValue(in Value v, in Loc pos) /*pure*/ {
+    switch (v.type) {
+    case Type.Thunk:
+        return eval(v.thunk, v.env);
+    case Type.App:
+        assert(v.list.length == 2);
+        return callFunction(v.list[0], v.list[1], pos);
+    // case Type.Blackhole:
+        // assert(0, "infinite recursion encountered");
+    default:
+        return v;
+    }
+}
+
+private Value prim_binOp(string OP)(in Value[] args...) /*pure*/ {
+    assert(args.length == 2);
+    return args[0].opBinary!OP(args[1]);
 }
 
 unittest {
@@ -53,31 +101,17 @@ unittest {
     assert(prim_binOp!"+"(Value("a"), Value("b")) == Value("ab"));
 }
 
-private Value prim_typeOf(in Value[] args...) pure {
+private Value prim_typeOf(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
-    final switch(args[0].type) {
-    case Type.Null: return Value("null");
-    case Type.String: return Value("string");
-    case Type.Int: return Value("int");
-    case Type.Float: return Value("float");
-    case Type.Bool: return Value("bool");
-    case Type.List: return Value("list");
-    case Type.Attrs: return Value("set");
-    case Type.Path: return Value("path");
-    case Type.App:
-    case Type.Lambda:
-    case Type.PrimOp:
-    case Type.PrimOpApp: return Value("lambda");
-    case Type.Thunk: assert(0, "TODO must force value");
-    }
+    return Value(forceValue(args[0], Loc()).typeOf);
 }
 
-private Value prim_isNull(in Value[] args...) pure {
+private Value prim_isNull(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
     return Value(args[0].type == Type.Null);
 }
 
-private Value prim_lessThan(in Value[] args...) pure {
+private Value prim_lessThan(in Value[] args...) /*pure*/ {
     assert(args.length == 2);
     switch (args[0].type) {
     case Type.Float:
@@ -107,7 +141,7 @@ private Value prim_lessThan(in Value[] args...) pure {
     }
 }
 
-private Value lessOrEqThan(in Value[] args...) pure {
+private Value lessOrEqThan(in Value[] args...) /*pure*/ {
     assert(args.length == 2);
     switch (args[0].type) {
     case Type.Float:
@@ -142,9 +176,77 @@ private Value lessOrEqThan(in Value[] args...) pure {
     }
 }
 
-private Value prim_toString(in Value[] args...) pure {
+private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
+    auto value = forceValue(v, Loc());
+    switch (value.type) {
+    case Type.String:
+    case Type.Path:
+        return value.s;
+    case Type.Attrs:
+        auto toString = "__toString" in value.attrs;
+        if (toString) {
+            auto s = coerceToString(callFunction(*toString, v, Loc()), coerceMore);
+            if (s) return s;
+        }
+        auto i = "outPath" in value.attrs;
+        assert(i, "cannot coerce a set to a string");
+        return coerceToString(*i, coerceMore);
+    // case Type.External: todo
+    default:
+    }
+    if (coerceMore) {
+        switch (value.type) {
+        case Type.Bool:
+            return value.boolean ? "1" : "";
+        case Type.Null:
+            return "";
+        case Type.List:
+            string result;
+            foreach(i, elem; value.list) {
+                if (i) result ~= ' ';
+                result ~= coerceToString(elem, coerceMore);
+            }
+            return result;
+        case Type.Int:
+        case Type.Float:
+            return value.toString();
+        default:
+        }
+    }
+    assert(0, "cannot coerce to a string");
+}
+
+unittest {
+    assert("" == coerceToString(Value()));
+}
+
+private Value prim_toString(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
     return Value(args[0].toString());
+}
+
+private Value prim_throw(in Value[] args...) /*pure*/ {
+    assert(args.length == 1);
+    throw new Error(args[0].s);
+}
+
+private Value prim_abort(in Value[] args...) /*pure*/ {
+    assert(args.length == 1);
+    throw new Error("evaluation aborted with the following error message: "~args[0].s);
+}
+
+private Value elemAt(in Value list, long n) pure {
+    return list.list[n];
+}
+
+private Value primop_elemAt(in Value[] args...) /*pure*/ {
+    assert(args.length == 2);
+    return elemAt(args[0], args[1].integer);
+}
+
+private Value primop_head(in Value[] args...) /*pure*/ {
+    assert(args.length == 1);
+    return elemAt(args[0], 0);
 }
 
 private const Env staticBaseEnv;
@@ -152,7 +254,7 @@ private const Env staticBaseEnv;
 static this() {
     import core.stdc.time : time;
 
-    static Value notImplemented(in Value[] args...) pure {
+    static Value notImplemented(in Value[] args...) /*pure*/ {
         assert(0, "not implemented");
     }
 
@@ -171,7 +273,7 @@ static this() {
         "derivation" : Value(&notImplemented), //lambda
         "derivationStrict" : Value(&notImplemented),
         "dirOf" : Value(&notImplemented), "__div" : Value(&prim_binOp!"/"),
-        "__elem" : Value(&notImplemented), "__elemAt" : Value(&notImplemented),
+        "__elem" : Value(&notImplemented), "__elemAt" : Value(&primop_elemAt),
         "false" : Value(false), "fetchGit" : Value(&notImplemented),
         "fetchMercurial" : Value(&notImplemented), "fetchTarball" : Value(&notImplemented),
         "__fetchurl" : Value(&notImplemented), "__filter" : Value(&notImplemented),
@@ -182,7 +284,7 @@ static this() {
         "__getAttr" : Value(&notImplemented), "__getContext" : Value(&notImplemented),
         "__getEnv" : Value(&notImplemented), "__hasAttr" : Value(&notImplemented),
         "__hasContext" : Value(&notImplemented), "__hashFile" : Value(&notImplemented),
-        "__hashString" : Value(&notImplemented), "__head" : Value(&notImplemented),
+        "__hashString" : Value(&notImplemented), "__head" : Value(&primop_head),
         "import" : Value(&notImplemented), //primOpApp
         "__intersectAttrs" : Value(&notImplemented),
         "__isAttrs" : Value(&notImplemented),
@@ -234,7 +336,7 @@ unittest {
 class VarBinder : Visitor {
     const(Env)* env = &staticBaseEnv;
 
-    void visit(Expr e, const ref Env env) {
+    void visit(in Expr e, const ref Env env) {
         if (e) {
             const prevEnv = this.env;
             this.env = &env;
@@ -243,28 +345,28 @@ class VarBinder : Visitor {
         }
     }
 
-    void visit(ExprOpNot e) {
+    void visit(in ExprOpNot e) {
         visit(e.expr, *env);
     }
 
-    void visit(ExprBinaryOp e) {
+    void visit(in ExprBinaryOp e) {
         visit(e.left, *env);
         visit(e.right, *env);
     }
 
-    void visit(ExprInt) {
+    void visit(in ExprInt) {
     }
 
-    void visit(ExprFloat) {
+    void visit(in ExprFloat) {
     }
 
-    void visit(ExprString) {
+    void visit(in ExprString) {
     }
 
-    void visit(ExprPath) {
+    void visit(in ExprPath) {
     }
 
-    void visit(ExprVar e) {
+    void visit(in ExprVar e) {
         int withLevel = -1;
         for (auto curEnv = env, level = 0; curEnv; curEnv = curEnv.up, level++) {
             if (curEnv.isWith) {
@@ -285,20 +387,20 @@ class VarBinder : Visitor {
         e.level = withLevel;
     }
 
-    void visit(ExprSelect e) {
+    void visit(in ExprSelect e) {
         visit(e.e, *env);
         visit(e.def, *env);
         foreach (a; e.ap)
             visit(a.expr, *env);
     }
 
-    void visit(ExprOpHasAttr e) {
+    void visit(in ExprOpHasAttr e) {
         visit(e.expr, *env);
         foreach (a; e.ap)
             visit(a.expr, *env);
     }
 
-    void visit(ExprAttrs e) {
+    void visit(in ExprAttrs e) {
         const(Env)* dynamicEnv = env;
         if (e.recursive) {
             Bindings b;
@@ -321,12 +423,12 @@ class VarBinder : Visitor {
         }
     }
 
-    void visit(ExprList e) {
+    void visit(in ExprList e) {
         foreach (i; e.elems)
             visit(i, *env);
     }
 
-    void visit(ExprLambda e) {
+    void visit(in ExprLambda e) {
         auto newEnv = Env(this.env);
         if (e.arg)
             newEnv.vars[e.arg] = Value();
@@ -342,7 +444,7 @@ class VarBinder : Visitor {
         visit(e.body, newEnv);
     }
 
-    void visit(ExprLet e) {
+    void visit(in ExprLet e) {
         auto newEnv = Env(env);
         foreach (k, v; e.attrs.attrs) {
             newEnv.vars[k] = Value();
@@ -353,334 +455,115 @@ class VarBinder : Visitor {
         visit(e.body, newEnv);
     }
 
-    void visit(ExprWith e) {
+    void visit(in ExprWith e) {
         visit(e.attrs, *env);
         auto newEnv = Env(env, true);
         visit(e.body, newEnv);
     }
 
-    void visit(ExprIf e) {
+    void visit(in ExprIf e) {
         visit(e.cond, *env);
         visit(e.then, *env);
         visit(e.else_, *env);
     }
 
-    void visit(ExprAssert e) {
+    void visit(in ExprAssert e) {
         visit(e.cond, *env);
         visit(e.body, *env);
     }
 }
 */
 
-enum Type : byte {
-    // Blackhole,
-    Null,
-    String,
-    Int,
-    Float,
-    Bool,
-    List,
-    // List1,
-    // List2,
-    Attrs,
-    Path,
-    Lambda,
-    Thunk,
-    PrimOp,
-    PrimOpApp,
-    App,
-    // Error,
-}
-
-private string escapeString(string s) @safe pure nothrow {
-    char[] buf;
-    buf.reserve(s.length + 2);
-    buf ~= '"';
-    foreach (c; s) {
-        switch (c) {
-        case '\\': buf ~= `\\`; break;
-        case '$': buf ~= `\$`; break;
-        case '"': buf ~= `\"`; break;
-        case '\t': buf ~= `\t`; break;
-        case '\n': buf ~= `\n`; break;
-        case '\r': buf ~= `\r`; break;
-        default: buf ~= c; break;
-        }
-    }
-    buf ~= '"';
-    return buf;
-}
-
-unittest {
-    assert(escapeString("\\$\"\n\t\r") == `"\\\$\"\n\t\r"`);
-}
-
-struct Value {
-    static auto EMPTY = Value(cast(Value[])[]);
-    static auto ZERO = Value(0);
-    static auto false_ = Value(false);
-    static auto true_ = Value(true);
-
-    Type type;
-    union {
-        struct {
-            string s;
-            // string[] context; TODO
-        }
-
-        // string path;
-        NixInt integer;
-        NixFloat fpoint;
-        bool boolean;
-        const(Value)[] list;
-        const(Bindings) attrs;
-        struct {
-            ExprLambda lambda;
-            const(Env)* lambdaEnv;
-        }
-
-        PrimOp primOp;
-        struct {
-            Expr thunk;
-            const(Env)* env;
-        }
-    }
-
-    this(string s) pure {
-        this.type = Type.String;
-        this.s = s;
-    }
-
-    this(NixInt integer) pure {
-        this.type = Type.Int;
-        this.integer = integer;
-    }
-
-    this(NixFloat fpoint) pure {
-        this.type = Type.Float;
-        this.fpoint = fpoint;
-    }
-
-    this(bool boolean) pure {
-        this.type = Type.Bool;
-        this.boolean = boolean;
-    }
-
-    this(in Value[] list) pure {
-        this.type = Type.List;
-        this.list = list;
-    }
-
-    this(in Bindings attrs) pure {
-        this.type = Type.Attrs;
-        this.attrs = attrs;
-    }
-
-    this(ExprLambda lambda, in ref Env env) pure {
-        this.type = Type.Lambda;
-        this.lambda = lambda;
-        this.env = &env;
-    }
-
-    this(Expr val, in ref Env env) pure {
-        this.type = Type.Thunk;
-        this.thunk = val;
-        this.env = &env;
-    }
-
-    this(PrimOp primOp) pure {
-        this.type = Type.PrimOp;
-        this.primOp = primOp;
-    }
-
-    this(Value left, Value right) pure {
-        this.type = Type.PrimOpApp;
-        this.list = [left, right];
-    }
-
-    @property real number() pure const nothrow {
-        return type == Type.Int ? integer : (type == Type.Float ? fpoint : real.nan);
-    }
-
-    Value opBinary(string OP)(auto ref const Value rhs) pure const {
-        return prim_binOp!OP(this, rhs);
-    }
-
-    bool opEquals()(auto ref const Value v) const {
-        final switch (type) {
-        case Type.Null:
-            return type == v.type;
-        case Type.Path:
-        case Type.String:
-            return type == v.type && s == v.s;
-        case Type.Int:
-            return integer == v.number;
-        case Type.Float:
-            return fpoint == v.number;
-        case Type.Bool:
-            return type == v.type && boolean == v.boolean;
-        case Type.App:
-        case Type.PrimOpApp:
-        case Type.List:
-            return type == v.type && list == v.list;
-        case Type.Attrs:
-            return type == v.type && attrs == v.attrs;
-        case Type.Lambda:
-            return type == v.type && lambda == v.lambda && env == v.env;
-        case Type.Thunk:
-            return type == v.type && thunk == v.thunk && env == v.env;
-        case Type.PrimOp:
-            return type == v.type && primOp == v.primOp && env == v.env;
-        }
-    }
-
-    string toString() const pure {
-        final switch (type) {
-        case Type.Null:
-            return "null";
-        case Type.Path:
-        case Type.String:
-            return escapeString(s);
-        case Type.Int:
-            return to!string(integer);
-        case Type.Float:
-            char[32] buf;
-            import std.string : strip;
-            static immutable fs = singleSpec("%e");
-            return printFloat(buf[], fpoint, fs).strip("e+0").idup; //to!string(fpoint);
-        case Type.Bool:
-            return boolean ? "true" : "false";
-        case Type.List:
-            auto s = "[ ";
-            foreach (e; list) s ~= e.toString() ~ ' ';
-            return s ~ ']';
-        case Type.Attrs:
-            auto s = "{ ";
-            foreach (k, v; attrs) s ~= k ~ " = " ~ v.toString() ~ "; ";
-            return s ~ '}';
-        case Type.Lambda:
-            return "<LAMBDA>";
-        case Type.App:
-        case Type.Thunk:
-            return "<CODE>";
-        case Type.PrimOp:
-            return "<PRIMOP>";
-        case Type.PrimOpApp:
-            return "<PRIMOP-APP>";
-        }
-    }
-}
-
-unittest {
-    assert(Value() == Value());
-    assert(Value() != Value(1));
-    assert(Value(2) == Value(2.0));
-    assert(Value(2.5) != Value(2));
-    assert(Value("a") == Value("ba"[1..$]));
-    assert(Value("a") != Value());
-    assert(Value(true) == Value(true));
-    assert(Value(false) == Value(false));
-    assert(Value(false) != Value(true));
-    assert(Value([Value(3),Value()]) == Value([Value(3.0),Value()]));
-    assert(Value(["n":Value(4)]) == Value(["n":Value(4.0)]));
-    assert(Value(["n":Value()]) != Value(["k":Value()]));
-
-    assert(Value().toString() == "null");
-    assert(Value(2).toString() == "2");
-    assert(Value(2.5).toString() == "2.5");
-    assert(Value("hello\n").toString() == `"hello\n"`);
-    assert(Value(true).toString() == "true");
-    assert(Value(false).toString() == "false");
-    assert(Value([Value()]).toString() == "[ null ]");
-    assert(Value(["n":Value()]).toString() == "{ n = null; }");
-}
 
 class Thunker : Visitor {
     Env env;
     Value value;
-    void thunk(Expr e) {
+    void thunk(in Expr e) {
         value = Value(e, env);
     }
 
-    void visit(ExprOpNot e) {
+    void visit(in ExprOpNot e) {
         thunk(e);
     }
 
-    void visit(ExprBinaryOp e) {
+    void visit(in ExprBinaryOp e) {
         thunk(e);
     }
 
-    void visit(ExprInt) {
+    void visit(in ExprInt) {
     }
 
-    void visit(ExprFloat) {
+    void visit(in ExprFloat) {
     }
 
-    void visit(ExprString) {
+    void visit(in ExprString) {
     }
 
-    void visit(ExprPath) {
+    void visit(in ExprPath) {
     }
 
-    void visit(ExprVar e) {
+    void visit(in ExprVar e) {
         // env.vars[e.name]
     }
 
-    void visit(ExprSelect e) {
+    void visit(in ExprSelect e) {
         thunk(e);
     }
 
-    void visit(ExprOpHasAttr e) {
+    void visit(in ExprOpHasAttr e) {
         thunk(e);
     }
 
-    void visit(ExprAttrs e) {
+    void visit(in ExprAttrs e) {
         thunk(e);
     }
 
-    void visit(ExprList e) {
+    void visit(in ExprList e) {
         thunk(e);
     }
 
-    void visit(ExprLambda e) {
+    void visit(in ExprLambda e) {
         thunk(e);
     }
 
-    void visit(ExprLet e) {
+    void visit(in ExprLet e) {
         thunk(e);
     }
 
-    void visit(ExprWith e) {
+    void visit(in ExprWith e) {
         thunk(e);
     }
 
-    void visit(ExprIf e) {
+    void visit(in ExprIf e) {
         thunk(e);
     }
 
-    void visit(ExprAssert e) {
+    void visit(in ExprAssert e) {
         thunk(e);
     }
 }
 
 class Evaluator : Visitor {
-    const(Env)* env = &staticBaseEnv;
-//    Env env = Env(&staticBaseEnv);
+    const(Env)* env;
     Value value;
 
-    Value visit(Expr e) {
+    this(const(Env)* env) /*pure*/ {
+        this.env = env;
+    }
+
+    Value visit(in Expr e) {
         if (e)
             e.accept(this);
         return value;
     }
 
-    void visit(ExprOpNot e) {
+    void visit(in ExprOpNot e) {
         visit(e.expr);
         assert(value.type == Type.Bool);
         value.boolean = !value.boolean;
     }
 
-    void visit(ExprBinaryOp e) {
+    void visit(in ExprBinaryOp e) {
         switch (e.op) {
         case Tok.AND:
             if (visit(e.left).boolean)
@@ -767,39 +650,36 @@ class Evaluator : Visitor {
         assert(0);
     }
 
-    void visit(ExprInt e) {
+    void visit(in ExprInt e) {
         value = Value(e.n);
     }
 
-    void visit(ExprFloat e) {
+    void visit(in ExprFloat e) {
         value = Value(e.f);
     }
 
-    void visit(ExprString e) {
+    void visit(in ExprString e) {
         value = Value(e.s);
     }
 
-    void visit(ExprPath e) {
+    void visit(in ExprPath e) {
         value = Value(e.p);
     }
 
-    void visit(ExprVar e) {
-        value = lookupVar(e.name);
-        // forceValue();
-        // value = env.vars[e.name];
+    void visit(in ExprVar e) {
+        value = forceValue(lookupVar(e.name), e.loc);
     }
 
-    string getName(ref AttrName an) {
+    string getName(in ref AttrName an) {
         if (an.ident) {
             return an.ident;
         } else {
             visit(an.expr);
-            assert(value.type == Type.String);
-            return value.s;
+            return forceString(value, Loc()).s;
         }
     }
 
-    void visit(ExprSelect e) {
+    void visit(in ExprSelect e) {
         visit(e.left);
         foreach (a; e.ap) {
             if (value.type == Type.Attrs) {
@@ -817,10 +697,10 @@ class Evaluator : Visitor {
         }
     }
 
-    void visit(ExprOpHasAttr e) {
+    void visit(in ExprOpHasAttr e) {
         visit(e.left);
         foreach (a; e.ap) {
-            // forceValue?
+            value = forceValue(value, e.loc);
             if (value.type == Type.Attrs) {
                 auto j = getName(a) in value.attrs;
                 if (j) {
@@ -834,64 +714,80 @@ class Evaluator : Visitor {
         value = Value(true);
     }
 
-    void visit(ExprAttrs e) {
+    void visit(in ExprAttrs e) {
         const(Env)* dynamicEnv = env;
         Bindings attrs;
         if (e.recursive) {
-            assert(0, "not implemented: rec");
-            // auto overrides = "__overrides" in e.attrs;
+            const hasOverrides = "__overrides" in e.attrs;
 
-            // auto newEnv = Env(env, false, attrs);
-            // foreach (k, v; e.attrs) {
-            //     if (overrides && !v.inherited) {
-            //         attrs[k] = mkThunk(v.value, newEnv);
-            //     } else {
-            //         attrs[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
-            //     }
-            // }
+            // Create a new environment that contains the attributes in this `rec'.
+            auto newEnv = Env(env, attrs);
 
-            // if (overrides) {
-            //     assert(overrides.type == Type.Attrs);
-            //     auto overrides = attrs[overrides.attrs;
-            // }
-            // dynamicEnv = &newEnv;
+            // The recursive attributes are evaluated in the new
+            // environment, while the inherited attributes are evaluated
+            // in the original environment.
+            foreach (k, v; e.attrs) {
+                if (hasOverrides && !v.inherited) {
+                    attrs[k] = mkThunk(v.value, newEnv);
+                } else {
+                    attrs[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
+                }
+            }
+
+            // If the rec contains an attribute called `__overrides', then
+            // evaluate it, and add the attributes in that set to the rec.
+            // This allows overriding of recursive attributes, which is
+            // otherwise not possible.  (You can use the // operator to
+            // replace an attribute, but other attributes in the rec will
+            // still reference the original value, because that value has
+            // been substituted into the bodies of the other attributes.
+            // Hence we need __overrides.)
+            if (hasOverrides) {
+                auto vOverrides = forceAttrs(attrs["__overrides"], e.loc);
+                Bindings newBnds;
+                foreach (k,v; attrs) {
+                    newBnds[k] = v;
+                }
+                foreach(k,v; vOverrides.attrs) {
+                    // auto j = k in e.attrs;
+                    newBnds[k] = v; // overwrites
+                }
+            }
+            dynamicEnv = &newEnv;
         } else {
             foreach (k, v; e.attrs) {
-                attrs[k] = visit(v.value);
+                attrs[k] = maybeThunk(v.value, *env);
             }
         }
+        // Dynamic attrs apply *after* rec and __overrides.
         foreach (v; e.dynamicAttrs) {
             visit(v.name);
-            assert(value.type == Type.String);
-            const k = value.s;
-            assert(k !in attrs);
-            attrs[k] = visit(v.value);
+            auto nameVal = forceValue(value, e.loc);
+            if (nameVal.type == Type.Null) {
+                continue;
+            }
+            assert(nameVal.type == Type.String, "a string was expected");
+            const nameSym = nameVal.s;
+            assert(nameSym !in attrs, "dynamic attribute already defined");
+            attrs[nameSym] = maybeThunk(v.value, *dynamicEnv);
         }
         value = Value(attrs);
     }
 
-    Value mkThunk(Expr e, in ref Env env) {
-        return Value(e, env);
-    }
-
-    Value maybeThunk(Expr e, in ref Env env) {
-        // TODO: don't thunk values or known vars; use Thunker
-        return mkThunk(e, env);
-    }
-
-    void visit(ExprList e) {
+    void visit(in ExprList e) {
         Value[] vars;
         foreach (v; e.elems)
-            vars ~= visit(v);
+            vars ~= maybeThunk(v, *env);
         value = Value(vars);
     }
 
-    void visit(ExprLambda e) {
+    void visit(in ExprLambda e) {
         value = Value(e, *env);
     }
 
-    void visit(ExprLet e) {
+    void visit(in ExprLet e) {
         Bindings b;
+        // Create a new environment that contains the attributes in this `let'.
         auto newEnv = Env(env, b);
         foreach (k, v; e.attrs.attrs) {
             b[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
@@ -901,36 +797,36 @@ class Evaluator : Visitor {
         env = newEnv.up;
     }
 
-    void visit(ExprWith e) {
+    void visit(in ExprWith e) {
         debug writeln(e.attrs);
-        auto att = visit(e.attrs);
+        auto att = visit(e.attrs);// TODO: make lazy
         assert(att.type == Type.Attrs, to!string(att.type) ~ ", expected attrs");
-        const newEnv = Env(env, att.attrs);// TODO: make lazy
+        const newEnv = Env(env, att.attrs);
         env = &newEnv;
         visit(e.body);
         env = newEnv.up;
     }
 
-    void visit(ExprIf e) {
+    void visit(in ExprIf e) {
         if (visit(e.cond).boolean)
             visit(e.then);
         else
             visit(e.else_);
     }
 
-    void visit(ExprAssert e) {
+    void visit(in ExprAssert e) {
         assert(visit(e.cond).boolean);
         visit(e.body);
     }
 }
 
-unittest {
-    auto eval(Expr e) {
-        auto ev = new Evaluator;
-        e.accept(ev);
-        return ev.value;
-    }
+public Value eval(in Expr e, in Env *env = &staticBaseEnv) /*pure*/ {
+    auto ev = new Evaluator(env);
+    e.accept(ev);
+    return ev.value;
+}
 
+unittest {
     auto ZERO = new ExprInt(0);
     auto false_ = new ExprVar("false");
     auto true_ = new ExprVar("true");

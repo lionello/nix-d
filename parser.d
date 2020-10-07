@@ -26,27 +26,27 @@ struct AttrName {
 alias AttrPath = AttrName[];
 
 interface Visitor {
-    void visit(ExprOpNot);
-    void visit(ExprBinaryOp);
-    void visit(ExprInt);
-    void visit(ExprFloat);
-    void visit(ExprString);
-    void visit(ExprPath);
-    void visit(ExprVar);
-    void visit(ExprSelect);
-    void visit(ExprOpHasAttr);
-    void visit(ExprAttrs);
-    void visit(ExprList);
-    void visit(ExprLambda);
-    void visit(ExprLet);
-    void visit(ExprWith);
-    void visit(ExprIf);
-    void visit(ExprAssert);
+    void visit(in ExprOpNot);
+    void visit(in ExprBinaryOp);
+    void visit(in ExprInt);
+    void visit(in ExprFloat);
+    void visit(in ExprString);
+    void visit(in ExprPath);
+    void visit(in ExprVar);
+    void visit(in ExprSelect);
+    void visit(in ExprOpHasAttr);
+    void visit(in ExprAttrs);
+    void visit(in ExprList);
+    void visit(in ExprLambda);
+    void visit(in ExprLet);
+    void visit(in ExprWith);
+    void visit(in ExprIf);
+    void visit(in ExprAssert);
 }
 
 abstract class Expr {
     Loc loc; // TODO
-    abstract void accept(Visitor v);
+    abstract void accept(Visitor v) const;
 }
 
 class ExprOpNot : Expr {
@@ -56,7 +56,7 @@ class ExprOpNot : Expr {
         this.expr = expr;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -77,7 +77,7 @@ class ExprBinaryOp : BinaryExpr {
         this.right = right;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
     override Tok operator() nothrow const pure { return op; }
@@ -94,7 +94,7 @@ class ExprSelect : BinaryExpr {
         this.def = def;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
     override Tok operator() nothrow const pure { return Tok.SELECT; }
@@ -109,7 +109,7 @@ class ExprOpHasAttr : BinaryExpr {
         this.ap = ap;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
     override Tok operator() nothrow const pure { return Tok.HAS_ATTR; }
@@ -124,7 +124,7 @@ class ExprInt : ValueExpr {
         this.n = n;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -135,7 +135,7 @@ class ExprFloat : ValueExpr {
         this.f = f;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -147,7 +147,7 @@ class ExprString : ValueExpr {
         this.s = s;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -158,7 +158,7 @@ class ExprPath : ValueExpr {
         this.p = p;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -172,7 +172,7 @@ class ExprVar : Expr {
         this.name = name;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -186,13 +186,14 @@ struct AttrDef {
 struct DynamicAttrDef {
     Expr name;
     Expr value;
+    // Loc loc;
 }
 
 class ExprAttrs : Expr {
     AttrDef[Ident] attrs;
     DynamicAttrDef[] dynamicAttrs;
     bool recursive;
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -203,7 +204,7 @@ class ExprList : Expr {
         this.elems = elems;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -229,7 +230,10 @@ class ExprLambda : Expr {
         this.body = body;
     }
 
-    override void accept(Visitor v) {
+    @property
+    bool matchAttrs() pure { return formals !is null; }
+
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -244,7 +248,7 @@ class ExprLet : Expr {
         this.body = body;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -259,7 +263,7 @@ class ExprWith : Expr {
         this.body = body;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -275,7 +279,7 @@ class ExprIf : Expr {
         this.else_ = else_;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -289,7 +293,7 @@ class ExprAssert : Expr {
         this.body = body;
     }
 
-    override void accept(Visitor v) {
+    override void accept(Visitor v) const {
         v.visit(this);
     }
 }
@@ -588,8 +592,10 @@ unittest {
     assert(parse("a,b").elems == [Formal("a"), Formal("b")]);
 }
 
-// Parse the tokens from the given range into an expression tree.
-Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
+public alias parse = parseExpression;
+
+/// Parse the tokens from the given range into an expression tree.
+private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
     const t = input.front;
     switch (t.tok) {
     case Tok.IDENTIFIER: // args@ or args: or func val or set.attr
