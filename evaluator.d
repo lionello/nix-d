@@ -5,13 +5,10 @@ import nix.value;
 import std.stdio : writeln, write;
 import std.conv : to;
 
-Value mkThunk(in Expr e, in ref Env env) /*pure*/ {
-    return Value(e, env);
-}
-
 Value maybeThunk(in Expr e, in ref Env env) /*pure*/ {
-    // TODO: don't thunk values or known vars; use Thunker
-    return mkThunk(e, env);
+    auto thunker = new Thunker(env);
+    e.accept(thunker);
+    return thunker.value;
 }
 
 private Value callPrimOp(in Value fun, in Value arg, in Loc pos) /*pure*/ {
@@ -103,7 +100,7 @@ unittest {
 
 private Value prim_typeOf(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
-    return Value(forceValue(args[0], Loc()).typeOf);
+    return Value(forceValue(args[0], Loc()).typeOf, null);
 }
 
 private Value prim_isNull(in Value[] args...) /*pure*/ {
@@ -217,7 +214,7 @@ private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
 }
 
 unittest {
-    assert("" == coerceToString(Value()));
+    assert("" == coerceToString(Value(), true));
 }
 
 private Value prim_toString(in Value[] args...) /*pure*/ {
@@ -267,7 +264,7 @@ static this() {
         "__bitOr" : Value(&notImplemented), "__bitXor" : Value(&notImplemented),
         "__catAttrs" : Value(&notImplemented), "__compareVersions" : Value(&notImplemented),
         "__concatLists" : Value(&notImplemented), "__concatMap" : Value(&notImplemented),
-        "__concatStringsSep" : Value(&notImplemented), "__currentSystem" : Value("x86_64-darwin"),
+        "__concatStringsSep" : Value(&notImplemented), "__currentSystem" : Value("x86_64-darwin", null),
         "__currentTime" : Value(time(null)), //123
         "__deepSeq" : Value(&notImplemented),
         "derivation" : Value(&notImplemented), //lambda
@@ -296,7 +293,7 @@ static this() {
         "__lessThan" : Value(&prim_lessThan), "__listToAttrs" : Value(&notImplemented),
         "map" : Value(&notImplemented), "__mapAttrs" : Value(&notImplemented),
         "__match" : Value(&notImplemented), "__mul" : Value(&prim_binOp!"*"),
-        "__nixPath" : Value.EMPTY, "__nixVersion" : Value("2.3.4"), //FIXME
+        "__nixPath" : Value.EMPTY, "__nixVersion" : Value("2.3.4", null), //FIXME
         "null" : Value(), "__parseDrvName" : Value(&notImplemented),
         "__partition" : Value(&notImplemented), "__path" : Value(&notImplemented),
         "__pathExists" : Value(&notImplemented), "placeholder" : Value(&notImplemented),
@@ -476,10 +473,15 @@ class VarBinder : Visitor {
 
 
 class Thunker : Visitor {
-    Env env;
+    const(Env) *env;
     Value value;
+
+    this(in ref Env env) {
+        this.env = &env;
+    }
+
     void thunk(in Expr e) {
-        value = Value(e, env);
+        value = Value(e, *env);
     }
 
     void visit(in ExprOpNot e) {
@@ -490,20 +492,25 @@ class Thunker : Visitor {
         thunk(e);
     }
 
-    void visit(in ExprInt) {
+    void visit(in ExprInt e) {
+        value = Value(e.n);
     }
 
-    void visit(in ExprFloat) {
+    void visit(in ExprFloat e) {
+        value = Value(e.f);
     }
 
-    void visit(in ExprString) {
+    void visit(in ExprString e) {
+        value = Value(e.s, null);
     }
 
-    void visit(in ExprPath) {
+    void visit(in ExprPath e) {
+        // value = Value(e.p);
     }
 
     void visit(in ExprVar e) {
         // env.vars[e.name]
+        assert(0);
     }
 
     void visit(in ExprSelect e) {
@@ -659,7 +666,7 @@ class Evaluator : Visitor {
     }
 
     void visit(in ExprString e) {
-        value = Value(e.s);
+        value = Value(e.s, null);
     }
 
     void visit(in ExprPath e) {
@@ -728,7 +735,7 @@ class Evaluator : Visitor {
             // in the original environment.
             foreach (k, v; e.attrs) {
                 if (hasOverrides && !v.inherited) {
-                    attrs[k] = mkThunk(v.value, newEnv);
+                    attrs[k] = Value(v.value, newEnv);
                 } else {
                     attrs[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
                 }
@@ -838,21 +845,22 @@ unittest {
     auto att = new ExprAttrs();
     att.attrs["a"] = AttrDef(new ExprString("ok"));
     att.attrs["true"] = AttrDef(true_, true);
-    assert(eval(att) == Value(["a": Value("ok"), "true": Value(true)]));
+    debug writeln(eval(att));
+    assert(forceValue(eval(att), Loc()) == Value(["a": Value("ok", null), "true": Value(true)]));
     att.dynamicAttrs ~= DynamicAttrDef(new ExprString("b"), new ExprString("p"));
-    assert(eval(att) == Value(["a": Value("ok"), "true": Value(true), "b": Value("p")]));
+    assert(eval(att) == Value(["a": Value("ok", null), "true": Value(true), "b": Value("p", null)]));
     att.recursive = true;
     att.attrs["c"] = AttrDef(new ExprVar("a"));
     att.dynamicAttrs ~= DynamicAttrDef(new ExprString("d"), new ExprVar("b"));
     // assert(eval(att) == Value(["a": Value("ok"), "true": Value(true), "b": Value("ok")])); needs `rec`
     assert(eval(new ExprFloat(1.1)) == Value(1.1));
     assert(eval(new ExprInt(42)) == Value(42));
-    assert(eval(new ExprString("foo")) == Value("foo"));
+    assert(eval(new ExprString("foo")) == Value("foo", null));
     assert(eval(new ExprPath("fo/o")) == Value("fo/o"));
     assert(eval(false_) == Value(false));
     assert(eval(new ExprVar("null")) == Value());
     assert(eval(true_) == Value(true));
-    assert(eval(new ExprAssert(true_, new ExprString("ok"))) == Value("ok"));
+    assert(eval(new ExprAssert(true_, new ExprString("ok"))) == Value("ok", null));
     assert(eval(new ExprOpNot(true_)) == Value(false));
     assert(eval(new ExprOpNot(false_)) == Value(true));
     assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == Value("ok"));

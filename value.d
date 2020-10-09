@@ -106,8 +106,13 @@ struct Value {
         }
     }
 
-    this(string s) /*pure*/ {
+    this(string s, string[] context) /*pure*/ {
         this.type = Type.String;
+        this.s = s;
+    }
+
+    this(string s) /*pure*/ {
+        this.type = Type.Path;
         this.s = s;
     }
 
@@ -262,6 +267,8 @@ struct Value {
 }
 
 unittest {
+    static assert(24 <= Value.sizeof);
+
     assert(Value() == Value());
     assert(Value() != Value(1));
     assert(Value(2) == Value(2.0));
