@@ -27,18 +27,18 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
         return callFunction(v2, arg, pos);
     case Type.Lambda:
         Bindings b;
-        auto env2 = Env(f.lambdaEnv, b);
+        auto env2 = Env(f.env, b);
         if (!f.lambda.formals) {
             // add f.lambda.arg to the new env
             b[f.lambda.arg] = arg;
         } else {
-            const args = forceAttrs(arg, pos);
+            const attrs = forceAttrs(arg, pos);
             // For each formal argument, get the actual argument.  If
             // there is no matching actual argument but the formal
             // argument has a default, use the default.
             int attrsUsed;
             foreach (formal; f.lambda.formals.elems) {
-                const j = formal.name in args.attrs;
+                const j = formal.name in attrs;
                 if (!j) {
                     assert(formal.def, "Lambda called without required argument "~formal.name);
                     b[formal.name] = maybeThunk(formal.def, env2);
@@ -47,8 +47,8 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
                     b[formal.name] = *j;
                 }
             }
-            if (!f.lambda.formals.ellipsis && attrsUsed != args.attrs.length) {
-                foreach (const k, v; args.attrs)
+            if (!f.lambda.formals.ellipsis && attrsUsed != attrs.length) {
+                foreach (const k, v; attrs)
                     assert(0, "Lambda called with unexpected argument "~k);
                 assert(0);
             }
@@ -59,16 +59,16 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
     }
 }
 
-private Value forceString(in Value v, in Loc pos) /*pure*/ {
+private string forceString(in Value v, in Loc pos) /*pure*/ {
     auto value = forceValue(v, pos);
     assert(value.type == Type.String, "value is "~typeOf(value)~" while a string was expected");
-    return value;
+    return value.s;
 }
 
-private Value forceAttrs(in Value v, in Loc pos) /*pure*/ {
+private const(Bindings) forceAttrs(in Value v, in Loc pos) /*pure*/ {
     auto value = forceValue(v, pos);
     assert(value.type == Type.Attrs, "value is "~typeOf(value)~" while a set was expected");
-    return value;
+    return value.attrs;
 }
 
 private Value forceValue(in Value v, in Loc pos) /*pure*/ {
@@ -88,14 +88,6 @@ private Value forceValue(in Value v, in Loc pos) /*pure*/ {
 private Value prim_binOp(string OP)(in Value[] args...) /*pure*/ {
     assert(args.length == 2);
     return args[0].opBinary!OP(args[1]);
-}
-
-unittest {
-    assert(prim_binOp!"*"(Value(3), Value(2)) == Value(6));
-    assert(prim_binOp!"/"(Value(3), Value(2.0)) == Value(1.5));
-    assert(prim_binOp!"-"(Value(1.0), Value(2)) == Value(-1.0));
-    assert(prim_binOp!"+"(Value(1.0), Value(2.0)) == Value(3.0));
-    assert(prim_binOp!"+"(Value("a"), Value("b")) == Value("ab"));
 }
 
 private Value prim_typeOf(in Value[] args...) /*pure*/ {
@@ -329,149 +321,6 @@ unittest {
     assert(staticBaseEnv.vars["builtins"].attrs["builtins"].type == Type.Attrs);
 }
 
-/*
-class VarBinder : Visitor {
-    const(Env)* env = &staticBaseEnv;
-
-    void visit(in Expr e, const ref Env env) {
-        if (e) {
-            const prevEnv = this.env;
-            this.env = &env;
-            e.accept(this);
-            this.env = prevEnv;
-        }
-    }
-
-    void visit(in ExprOpNot e) {
-        visit(e.expr, *env);
-    }
-
-    void visit(in ExprBinaryOp e) {
-        visit(e.left, *env);
-        visit(e.right, *env);
-    }
-
-    void visit(in ExprInt) {
-    }
-
-    void visit(in ExprFloat) {
-    }
-
-    void visit(in ExprString) {
-    }
-
-    void visit(in ExprPath) {
-    }
-
-    void visit(in ExprVar e) {
-        int withLevel = -1;
-        for (auto curEnv = env, level = 0; curEnv; curEnv = curEnv.up, level++) {
-            if (curEnv.isWith) {
-                if (withLevel == -1)
-                    withLevel = level;
-            } else {
-                if (e.name in curEnv.vars) {
-                    // e.fromWith = false;
-                    e.level = level;
-                    // e.displ =
-                    return;
-                }
-            }
-        }
-        if (withLevel == -1)
-            throw new Error("undefined variable " ~ e.name);
-        // e.fromWith = true;
-        e.level = withLevel;
-    }
-
-    void visit(in ExprSelect e) {
-        visit(e.e, *env);
-        visit(e.def, *env);
-        foreach (a; e.ap)
-            visit(a.expr, *env);
-    }
-
-    void visit(in ExprOpHasAttr e) {
-        visit(e.expr, *env);
-        foreach (a; e.ap)
-            visit(a.expr, *env);
-    }
-
-    void visit(in ExprAttrs e) {
-        const(Env)* dynamicEnv = env;
-        if (e.recursive) {
-            Bindings b;
-            foreach (k, v; e.attrs) {
-                b[k] = Value();
-            }
-            auto newEnv = Env(env, false, b);
-            dynamicEnv = &newEnv;
-            foreach (k, v; e.attrs) {
-                visit(v.value, *(v.inherited ? env : &newEnv));
-            }
-        } else {
-            foreach (a; e.attrs) {
-                visit(a.value, *env);
-            }
-        }
-        foreach (i; e.dynamicAttrs) {
-            visit(i.name, *dynamicEnv);
-            visit(i.value, *dynamicEnv);
-        }
-    }
-
-    void visit(in ExprList e) {
-        foreach (i; e.elems)
-            visit(i, *env);
-    }
-
-    void visit(in ExprLambda e) {
-        auto newEnv = Env(this.env);
-        if (e.arg)
-            newEnv.vars[e.arg] = Value();
-        if (e.formals) {
-            foreach (f; e.formals.elems) {
-                newEnv.vars[f.name] = Value();
-            }
-            foreach (f; e.formals.elems) {
-                if (f.def)
-                    visit(f.def, newEnv);
-            }
-        }
-        visit(e.body, newEnv);
-    }
-
-    void visit(in ExprLet e) {
-        auto newEnv = Env(env);
-        foreach (k, v; e.attrs.attrs) {
-            newEnv.vars[k] = Value();
-        }
-        foreach (k, i; e.attrs.attrs) {
-            visit(i.value, i.inherited ? *env : newEnv);
-        }
-        visit(e.body, newEnv);
-    }
-
-    void visit(in ExprWith e) {
-        visit(e.attrs, *env);
-        auto newEnv = Env(env, true);
-        visit(e.body, newEnv);
-    }
-
-    void visit(in ExprIf e) {
-        visit(e.cond, *env);
-        visit(e.then, *env);
-        visit(e.else_, *env);
-    }
-
-    void visit(in ExprAssert e) {
-        visit(e.cond, *env);
-        visit(e.body, *env);
-    }
-}
-*/
-
-
 class Thunker : Visitor {
     const(Env) *env;
     Value value;
@@ -479,6 +328,17 @@ class Thunker : Visitor {
     this(in ref Env env) {
         this.env = &env;
     }
+
+    const(Value) lookupVar(string name) {
+        for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
+            // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
+            auto v = name in curEnv.vars;
+            if (v)
+                return *v;
+        }
+        assert(0, "undefined variable "~name);
+    }
+
 
     void thunk(in Expr e) {
         value = Value(e, *env);
@@ -505,12 +365,11 @@ class Thunker : Visitor {
     }
 
     void visit(in ExprPath e) {
-        // value = Value(e.p);
+        value = Value(e.p);
     }
 
     void visit(in ExprVar e) {
-        // env.vars[e.name]
-        assert(0);
+        value = lookupVar(e.name);
     }
 
     void visit(in ExprSelect e) {
@@ -654,7 +513,7 @@ class Evaluator : Visitor {
             if (v)
                 return *v;
         }
-        assert(0);
+        assert(0, "undefined variable "~name);
     }
 
     void visit(in ExprInt e) {
@@ -682,7 +541,7 @@ class Evaluator : Visitor {
             return an.ident;
         } else {
             visit(an.expr);
-            return forceString(value, Loc()).s;
+            return forceString(value, Loc());
         }
     }
 
@@ -690,7 +549,7 @@ class Evaluator : Visitor {
         visit(e.left);
         foreach (a; e.ap) {
             if (value.type == Type.Attrs) {
-                auto j = getName(a) in value.attrs;
+                const j = getName(a) in value.attrs;
                 if (j) {
                     value = *j;
                     continue;
@@ -755,7 +614,7 @@ class Evaluator : Visitor {
                 foreach (k,v; attrs) {
                     newBnds[k] = v;
                 }
-                foreach(k,v; vOverrides.attrs) {
+                foreach(k,v; vOverrides) {
                     // auto j = k in e.attrs;
                     newBnds[k] = v; // overwrites
                 }
@@ -769,7 +628,7 @@ class Evaluator : Visitor {
         // Dynamic attrs apply *after* rec and __overrides.
         foreach (v; e.dynamicAttrs) {
             visit(v.name);
-            auto nameVal = forceValue(value, e.loc);
+            const nameVal = forceValue(value, e.loc);
             if (nameVal.type == Type.Null) {
                 continue;
             }
@@ -852,7 +711,7 @@ unittest {
     att.recursive = true;
     att.attrs["c"] = AttrDef(new ExprVar("a"));
     att.dynamicAttrs ~= DynamicAttrDef(new ExprString("d"), new ExprVar("b"));
-    // assert(eval(att) == Value(["a": Value("ok"), "true": Value(true), "b": Value("ok")])); needs `rec`
+    assert(eval(att) == Value(["a": Value("ok",null), "true": Value(true), "b": Value("ok", null)])); //needs `rec`
     assert(eval(new ExprFloat(1.1)) == Value(1.1));
     assert(eval(new ExprInt(42)) == Value(42));
     assert(eval(new ExprString("foo")) == Value("foo", null));
@@ -863,7 +722,7 @@ unittest {
     assert(eval(new ExprAssert(true_, new ExprString("ok"))) == Value("ok", null));
     assert(eval(new ExprOpNot(true_)) == Value(false));
     assert(eval(new ExprOpNot(false_)) == Value(true));
-    assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == Value("ok"));
-    assert(eval(new ExprIf(false_, new ExprFloat(1.1), new ExprString("ok"))) == Value("ok"));
-    assert(eval(new ExprList([new ExprString("ok")])) == Value([Value("ok")]));
+    assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == Value("ok", null));
+    assert(eval(new ExprIf(false_, new ExprFloat(1.1), new ExprString("ok"))) == Value("ok", null));
+    assert(eval(new ExprList([new ExprString("ok")])) == Value([Value("ok", null)]));
 }

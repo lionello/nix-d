@@ -2,6 +2,7 @@ module nix.value;
 
 public import nix.parser;
 
+debug import std.stdio : writeln;
 import std.conv : to;
 
 alias Bindings = Value[string];
@@ -94,80 +95,76 @@ struct Value {
         bool boolean;
         const(Value)[] list;
         const(Bindings) attrs;
+        const(ExprLambda) lambda;
+        const(Expr) thunk;
         struct {
-            const(ExprLambda) lambda;
-            const(Env)* lambdaEnv;
-        }
-
-        PrimOp primOp;
-        struct {
-            const(Expr) thunk;
+            PrimOp primOp;
             const(Env)* env;
         }
     }
 
-    this(string s, string[] context) /*pure*/ {
+    this(string s, in string[] context) pure {
         this.type = Type.String;
         this.s = s;
     }
 
-    this(string s) /*pure*/ {
+    this(string s) pure {
         this.type = Type.Path;
         this.s = s;
     }
 
-    this(NixInt integer) /*pure*/ {
+    this(NixInt integer) pure {
         this.type = Type.Int;
         this.integer = integer;
     }
 
-    this(NixFloat fpoint) /*pure*/ {
+    this(NixFloat fpoint) pure {
         this.type = Type.Float;
         this.fpoint = fpoint;
     }
 
-    this(bool boolean) /*pure*/ {
+    this(bool boolean) pure {
         this.type = Type.Bool;
         this.boolean = boolean;
     }
 
-    this(in Value[] list) /*pure*/ {
+    this(in Value[] list) pure {
         this.type = Type.List;
         this.list = list;
     }
 
-    this(in Bindings attrs) /*pure*/ {
+    this(in Bindings attrs) pure {
         this.type = Type.Attrs;
         this.attrs = attrs;
     }
 
-    this(in ExprLambda lambda, in ref Env env) /*pure*/ {
+    this(in ExprLambda lambda, in ref Env env) pure {
         this.type = Type.Lambda;
         this.lambda = lambda;
-        this.lambdaEnv = &env;
+        this.env = &env;
     }
 
-    this(in Expr val, in ref Env env) /*pure*/ {
+    this(in Expr val, in ref Env env) pure {
         this.type = Type.Thunk;
         this.thunk = val;
         this.env = &env;
     }
 
-    this(PrimOp primOp) /*pure*/ {
+    this(PrimOp primOp) pure {
         this.type = Type.PrimOp;
         this.primOp = primOp;
     }
 
-    this(Value left, Value right) /*pure*/ {
+    this(Value left, Value right) pure {
         this.type = Type.PrimOpApp;
         this.list = [left, right];
     }
 
-    @property real number() /*pure*/ const nothrow {
+    @property real number() pure const nothrow {
         return type == Type.Int ? integer : (type == Type.Float ? fpoint : real.nan);
     }
 
-    Value opBinary(string OP)(auto ref const Value rhs) /*pure*/ const  if (__traits(compiles,"1"~OP~"2.2")) {
+    Value opBinary(string OP)(auto ref const Value rhs) pure const  if (__traits(compiles,"1"~OP~"2.2")) {
         switch (this.type) {
         case Type.Float:
             switch(rhs.type) {
@@ -190,7 +187,7 @@ struct Value {
         case Type.String:
             static if (OP == "+") {
             assert(rhs.type == Type.String, "cannot coerce to string");
-            return Value(this.s ~ rhs.s);
+            return Value(this.s ~ rhs.s, null);
             }
         default: assert(0, "No operator "~OP~" for type "~typeOf(this));
         }
@@ -290,4 +287,13 @@ unittest {
     assert(Value(false).toString() == "false");
     assert(Value([Value()]).toString() == "[ null ]");
     assert(Value(["n":Value()]).toString() == "{ n = null; }");
+}
+
+unittest {
+    assert(Value(3) * Value(2) == Value(6));
+    assert(Value(5) / Value(2) == Value(2));
+    assert(Value(3) / Value(2.0) == Value(1.5));
+    assert(Value(1.0) - Value(2) == Value(-1.0));
+    assert(Value(1.0) + Value(2.0) == Value(3.0));
+    assert(Value("a", null) + Value("b", null) == Value("ab", null));
 }
