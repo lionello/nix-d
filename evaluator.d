@@ -32,7 +32,7 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
             // add f.lambda.arg to the new env
             b[f.lambda.arg] = arg;
         } else {
-            const attrs = forceAttrs(arg, pos);
+            const attrs = forceValue(arg, pos).attrs;
             // For each formal argument, get the actual argument.  If
             // there is no matching actual argument but the formal
             // argument has a default, use the default.
@@ -57,18 +57,6 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
     default:
         assert(0, "attempt to call something which is not a function");
     }
-}
-
-private string forceString(in Value v, in Loc pos) /*pure*/ {
-    auto value = forceValue(v, pos);
-    assert(value.type == Type.String, "value is "~typeOf(value)~" while a string was expected");
-    return value.s;
-}
-
-private const(Bindings) forceAttrs(in Value v, in Loc pos) /*pure*/ {
-    auto value = forceValue(v, pos);
-    assert(value.type == Type.Attrs, "value is "~typeOf(value)~" while a set was expected");
-    return value.attrs;
 }
 
 private Value forceValue(in Value v, in Loc pos) /*pure*/ {
@@ -97,80 +85,21 @@ private Value prim_typeOf(in Value[] args...) /*pure*/ {
 
 private Value prim_isNull(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
-    return Value(args[0].type == Type.Null);
+    return Value(args[0].isNull);
 }
 
 private Value prim_lessThan(in Value[] args...) /*pure*/ {
     assert(args.length == 2);
-    switch (args[0].type) {
-    case Type.Float:
-        switch (args[1].type) {
-        case Type.Float:
-            return Value(args[0].fpoint < args[1].fpoint);
-        case Type.Int:
-            return Value(args[0].fpoint < args[1].integer);
-        default:
-            assert(0, "cannot compare");
-        }
-    case Type.Int:
-        switch (args[1].type) {
-        case Type.Float:
-            return Value(args[0].integer < args[1].fpoint);
-        case Type.Int:
-            return Value(args[0].integer < args[1].integer);
-        default:
-            assert(0, "cannot compare");
-        }
-    case Type.String:
-    case Type.Path:
-        assert(args[0].type == args[1].type, "cannot compare");
-        return Value(args[0].s < args[1].s);
-    default:
-        assert(0, "cannot compare");
-    }
-}
-
-private Value lessOrEqThan(in Value[] args...) /*pure*/ {
-    assert(args.length == 2);
-    switch (args[0].type) {
-    case Type.Float:
-        switch (args[1].type) {
-        case Type.Float:
-            return Value(args[0].fpoint <= args[1].fpoint);
-        case Type.Int:
-            return Value(args[0].fpoint <= args[1].integer);
-        default:
-            assert(0);
-        }
-    case Type.Int:
-        switch (args[1].type) {
-        case Type.Float:
-            return Value(args[0].integer <= args[1].fpoint);
-        case Type.Int:
-            return Value(args[0].integer <= args[1].integer);
-        default:
-            assert(0);
-        }
-    case Type.String:
-    case Type.Path:
-        switch (args[1].type) {
-        case Type.String:
-        case Type.Path:
-            return Value(args[0].s <= args[1].s);
-        default:
-            assert(0);
-        }
-    default:
-        assert(0);
-    }
+    return Value(args[0] < args[1]);
 }
 
 private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
     auto value = forceValue(v, Loc());
     switch (value.type) {
     case Type.String:
+        return value.str;
     case Type.Path:
-        return value.s;
+        return value.path;
     case Type.Attrs:
         auto toString = "__toString" in value.attrs;
         if (toString) {
@@ -216,12 +145,12 @@ private Value prim_toString(in Value[] args...) /*pure*/ {
 
 private Value prim_throw(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
-    throw new Error(args[0].s);
+    throw new Error(args[0].str);
 }
 
 private Value prim_abort(in Value[] args...) /*pure*/ {
     assert(args.length == 1);
-    throw new Error("evaluation aborted with the following error message: "~args[0].s);
+    throw new Error("evaluation aborted with the following error message: "~args[0].str);
 }
 
 private Value elemAt(in Value list, long n) pure {
@@ -257,8 +186,7 @@ static this() {
         "__catAttrs" : Value(&notImplemented), "__compareVersions" : Value(&notImplemented),
         "__concatLists" : Value(&notImplemented), "__concatMap" : Value(&notImplemented),
         "__concatStringsSep" : Value(&notImplemented), "__currentSystem" : Value("x86_64-darwin", null),
-        "__currentTime" : Value(time(null)), //123
-        "__deepSeq" : Value(&notImplemented),
+        "__currentTime" : Value(time(null)), "__deepSeq" : Value(&notImplemented),
         "derivation" : Value(&notImplemented), //lambda
         "derivationStrict" : Value(&notImplemented),
         "dirOf" : Value(&notImplemented), "__div" : Value(&prim_binOp!"/"),
@@ -285,7 +213,7 @@ static this() {
         "__lessThan" : Value(&prim_lessThan), "__listToAttrs" : Value(&notImplemented),
         "map" : Value(&notImplemented), "__mapAttrs" : Value(&notImplemented),
         "__match" : Value(&notImplemented), "__mul" : Value(&prim_binOp!"*"),
-        "__nixPath" : Value.EMPTY, "__nixVersion" : Value("2.3.4", null), //FIXME
+        "__nixPath" : Value(cast(Value[])[]), "__nixVersion" : Value("2.3.4", null), //FIXME
         "null" : Value(), "__parseDrvName" : Value(&notImplemented),
         "__partition" : Value(&notImplemented), "__path" : Value(&notImplemented),
         "__pathExists" : Value(&notImplemented), "placeholder" : Value(&notImplemented),
@@ -296,7 +224,7 @@ static this() {
         "__splitVersion" : Value(&notImplemented), "__storeDir" : Value("/nix/store"),
         "__storePath" : Value(&notImplemented), "__stringLength" : Value(&notImplemented),
         "__sub" : Value(&prim_binOp!"-"), "__substring" : Value(&notImplemented),
-        "__tail" : Value(&notImplemented), "throw" : Value(&notImplemented),
+        "__tail" : Value(&notImplemented), "throw" : Value(&prim_throw),
         "__toFile" : Value(&notImplemented), "__toJSON" : Value(&notImplemented),
         "__toPath" : Value(&notImplemented), "toString" : Value(&prim_toString),
         "__toXML" : Value(&notImplemented), "__trace" : Value(&notImplemented),
@@ -425,8 +353,7 @@ class Evaluator : Visitor {
 
     void visit(in ExprOpNot e) {
         visit(e.expr);
-        assert(value.type == Type.Bool);
-        value.boolean = !value.boolean;
+        value = Value(!value.boolean);
     }
 
     void visit(in ExprBinaryOp e) {
@@ -434,12 +361,12 @@ class Evaluator : Visitor {
         case Tok.AND:
             if (visit(e.left).boolean)
                 visit(e.right);
-            assert(value.type == Type.Bool);
+            assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.OR:
             if (!visit(e.left).boolean)
                 visit(e.right);
-            assert(value.type == Type.Bool);
+            assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.EQ:
             value = Value(visit(e.left) == visit(e.right));
@@ -464,42 +391,35 @@ class Evaluator : Visitor {
             break;
         case Tok.UPDATE:
             Bindings b;
-            auto orig = visit(e.left);
-            assert(orig.type == Type.Attrs);
-            foreach (k, v; orig.attrs) {
+            foreach (k, v; visit(e.left).attrs) {
                 b[k] = v;
             }
-            auto update = visit(e.right);
-            assert(update.type == Type.Attrs);
-            foreach (k, v; update.attrs) {
+            foreach (k, v; visit(e.right).attrs) {
                 b[k] = v;
             }
             value = Value(b);
             break;
         case Tok.LT:
-            value = prim_lessThan(visit(e.left), visit(e.right));
+            value = Value(visit(e.left) < visit(e.right));
             break;
         case Tok.LEQ:
-            value = lessOrEqThan(visit(e.left), visit(e.right));
+            value = Value(visit(e.left) <= visit(e.right));
             break;
         case Tok.GT:
-            value = Value(!lessOrEqThan(visit(e.left), visit(e.right)).boolean);
+            value = Value(visit(e.left) > visit(e.right));
             break;
         case Tok.GEQ:
-            value = Value(!prim_lessThan(visit(e.left), visit(e.right)).boolean);
+            value = Value(visit(e.left) >= visit(e.right));
             break;
         case Tok.IMPL:
             if (visit(e.left).boolean)
                 visit(e.right);
             else
-                value.boolean = true;
-            assert(value.type == Type.Bool);
+                value = Value.TRUE;
+            assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.APP:
-            const args = visit(e.right);
-            // TODO: create new Env with all args added
-            // Env newEnv;
-            visit(visit(e.left).lambda);
+            value = callFunction(visit(e.left), maybeThunk(e.right, *env), e.loc);
             break;
         default:
             assert(0);
@@ -541,7 +461,7 @@ class Evaluator : Visitor {
             return an.ident;
         } else {
             visit(an.expr);
-            return forceString(value, Loc());
+            return forceValue(value, Loc()).str;
         }
     }
 
@@ -609,7 +529,7 @@ class Evaluator : Visitor {
             // been substituted into the bodies of the other attributes.
             // Hence we need __overrides.)
             if (hasOverrides) {
-                auto vOverrides = forceAttrs(attrs["__overrides"], e.loc);
+                auto vOverrides = forceValue(attrs["__overrides"], e.loc).attrs;
                 Bindings newBnds;
                 foreach (k,v; attrs) {
                     newBnds[k] = v;
@@ -632,8 +552,7 @@ class Evaluator : Visitor {
             if (nameVal.type == Type.Null) {
                 continue;
             }
-            assert(nameVal.type == Type.String, "a string was expected");
-            const nameSym = nameVal.s;
+            const nameSym = nameVal.str;
             assert(nameSym !in attrs, "dynamic attribute already defined");
             attrs[nameSym] = maybeThunk(v.value, *dynamicEnv);
         }

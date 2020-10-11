@@ -205,26 +205,18 @@ private bool isUriSchemeChar(dchar d) pure {
 // https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
 private bool isUriPathChar(dchar d) pure {
     switch (d) {
-    case 'a': .. case 'z':
-    case 'A': .. case 'Z':
-    case '0': .. case '9':
-    case '%':
-    case '/':
-    case '?':
-    case ':':
-    case '@':
-    case '&':
-    case '=':
-    case '$':
-    case ',':
-    case '-':
-    case '_':
-    case '.':
     case '!':
+    case '$': .. case '\'':
+    case '*': .. case '/':
+    case '0': .. case '9':
+    case ':':
+    case '=':
+    case '?':
+    case '@':
+    case 'A': .. case 'Z':
+    case '_':
+    case 'a': .. case 'z':
     case '~':
-    case '*':
-    case '\'':
-    case '+':
             return true;
     default:
         return false;
