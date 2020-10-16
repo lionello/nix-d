@@ -177,20 +177,19 @@ class ExprVar : Expr {
     }
 }
 
-struct AttrDef {
-    Expr value;
-    bool inherited;
-    //uint displ; // index into env
-}
-
-struct DynamicAttrDef {
-    Expr name;
-    Expr value;
-    // Loc loc;
-}
-
 class ExprAttrs : Expr {
+    static struct AttrDef {
+        Expr value;
+        bool inherited;
+        // Loc loc;
+    }
     AttrDef[Ident] attrs;
+
+    static struct DynamicAttrDef {
+        Expr name;
+        Expr value;
+        // Loc loc;
+    }
     DynamicAttrDef[] dynamicAttrs;
     bool recursive;
     override void accept(Visitor v) const {
@@ -212,6 +211,7 @@ class ExprList : Expr {
 struct Formal {
     Ident name;
     Expr def;
+    // Loc loc;
 }
 
 class Formals {
@@ -331,7 +331,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 foreach (ap; parseAttrs(input)) {
                     assert(ap.ident);
                     assert(ap.ident !in binds.attrs);
-                    binds.attrs[ap.ident] = AttrDef(new ExprSelect(expr, [
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprSelect(expr, [
                                 ap
                             ]), true);
                 }
@@ -339,7 +339,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 foreach (ap; parseAttrs(input)) {
                     assert(ap.ident);
                     assert(ap.ident !in binds.attrs);
-                    binds.attrs[ap.ident] = AttrDef(new ExprVar(ap.ident), true);
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprVar(ap.ident), true);
                 }
             }
             break;
@@ -433,7 +433,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.LEFT_PARENS:
         input.popFront(); // eat the (
         auto e = parseExpression(input);
-        debug writeln("parseSimple: parseExpression returned ", e);
+        debug(PARSER) writeln("parseSimple: parseExpression returned ", e);
         assert(e, input.front.s);
         assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
         input.popFront(); // eat the )
@@ -448,13 +448,10 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront();
         return new ExprString(t.s);
     case Tok.PATH:
-        input.popFront();
-        // TODO: make absolute
-        return new ExprPath(t.s);
     case Tok.HPATH:
         input.popFront();
-        const home = "/todo";
-        return new ExprPath(home ~ t.s[1 .. $]);
+        // Cannot convert paths to absolute here because parsing is pure
+        return new ExprPath(t.s);
     case Tok.SPATH:
         input.popFront();
         auto findNixPath = new ExprBinaryOp(Tok.APP, new ExprVar("__findFile"), new ExprVar("__nixPath"));
@@ -710,7 +707,7 @@ private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
 }
 
 private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
-    debug writeln("parseOp ", input.front.tok, input.front.s);
+    debug(PARSER) writeln("parseOp ", input.front.tok, input.front.s);
     switch (input.front.tok) {
     case Tok.NOT:
         input.popFront(); // eat the !
@@ -742,7 +739,7 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
         return new ExprBinaryOp(Tok.SUB, new ExprInt(0), expr);
     default:
         auto left = parseApp(input);
-        debug writeln("parseOp: parseApp returned ", left);
+        debug(PARSER) writeln("parseOp: parseApp returned ", left);
     case_op:
         if (!left || input.empty)
             return left;
@@ -826,9 +823,9 @@ unittest {
 }
 
 private Expr parseApp(R)(ref R input) pure if (isTokenRange!R) {
-    debug writeln("parseApp ", input.front.tok, input.front.s);
+    debug(PARSER) writeln("parseApp ", input.front.tok, input.front.s);
     auto select = parseSelect(input);
-    debug writeln("parseApp: parseSelect returned ", select);
+    debug(PARSER) writeln("parseApp: parseSelect returned ", select);
     if (!select)
         return null;
     while (true) {
@@ -927,12 +924,12 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
                 assert(attrs);
             } else {
                 auto nested = new ExprAttrs();
-                attrs.attrs[i.ident] = AttrDef(nested);
+                attrs.attrs[i.ident] = ExprAttrs.AttrDef(nested);
                 attrs = nested;
             }
         } else {
             auto nested = new ExprAttrs();
-            attrs.dynamicAttrs ~= DynamicAttrDef(i.expr, nested);
+            attrs.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(i.expr, nested);
             attrs = nested;
         }
     }
@@ -951,9 +948,9 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
             }
         } else {
             // This attr path is not defined. Let's create it.
-            attrs.attrs[i.ident] = AttrDef(e);
+            attrs.attrs[i.ident] = ExprAttrs.AttrDef(e);
         }
     } else {
-        attrs.dynamicAttrs ~= DynamicAttrDef(i.expr, e);
+        attrs.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(i.expr, e);
     }
 }

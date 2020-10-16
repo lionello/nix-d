@@ -1,24 +1,30 @@
 module nix.evaluator;
 
-import nix.value;
+import nix.value, nix.primops;
 
-import std.stdio : writeln, write;
-import std.conv : to;
+debug import std.stdio : writeln;
 
-Value maybeThunk(in Expr e, in ref Env env) /*pure*/ {
+Value maybeThunk(in Expr e, in Env* env) /*pure*/ {
+    // debug writeln(__LINE__, env.vars);
     auto thunker = new Thunker(env);
     e.accept(thunker);
     return thunker.value;
 }
 
 private Value callPrimOp(in Value fun, in Value arg, in Loc pos) /*pure*/ {
-    return Value();
+    // Value p = fun;
+    // while (p.type != Type.PrimOp) {
+    //     p = p.app[0];
+    // }
+    return fun.primOp()(fun.primOpArgs ~ arg);
 }
 
-private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+    // debug writeln("callFunction ", fun, arg);
     auto f = forceValue(fun, pos);
     switch(f.type) {
     case Type.PrimOp:
+        assert(0);
     case Type.PrimOpApp:
         return callPrimOp(f, arg, pos);
     case Type.Attrs:
@@ -26,8 +32,8 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
         const v2 = callFunction(functor, f, pos);
         return callFunction(v2, arg, pos);
     case Type.Lambda:
-        Bindings b;
-        auto env2 = Env(f.env, b);
+        Bindings b = empty;
+        auto env2 = new Env(f.env, b);
         if (!f.lambda.formals) {
             // add f.lambda.arg to the new env
             b[f.lambda.arg] = arg;
@@ -53,19 +59,44 @@ private Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
                 assert(0);
             }
         }
-        return eval(f.lambda, &env2);
+        return eval(f.lambda.body, *env2);
     default:
         assert(0, "attempt to call something which is not a function");
     }
 }
 
-private Value forceValue(in Value v, in Loc pos) /*pure*/ {
+Value forceValueDeep(in Value v) {
+    // debug writeln("forceValueDeep ", v);
+    switch (v.type) {
+    case Type.Attrs:
+        // TODO: detect infinite recursion
+        Bindings b;
+        foreach (k, e; v.attrs) {
+            // TODO: minimize memory allocation by using COW
+            b[k] = forceValueDeep(e);
+        }
+        return Value(b);
+    case Type.List:
+        Value[] l;
+        foreach (ref e; v.list) {
+            // TODO: minimize memory allocation by using COW
+            l ~= forceValueDeep(e);
+        }
+        return Value(l);
+    default:
+        return forceValue(v);
+    }
+}
+
+Value forceValue(in Value v, in Loc pos = Loc()) {
+    // debug writeln("forceValue ", v);
     switch (v.type) {
     case Type.Thunk:
-        return eval(v.thunk, v.env);
+        return eval(v.thunk, *v.env);
+    case Type.PrimOp:
+        return v.primOp()();
     case Type.App:
-        assert(v.list.length == 2);
-        return callFunction(v.list[0], v.list[1], pos);
+        return callFunction(v.app[0], v.app[1], pos);
     // case Type.Blackhole:
         // assert(0, "infinite recursion encountered");
     default:
@@ -73,28 +104,17 @@ private Value forceValue(in Value v, in Loc pos) /*pure*/ {
     }
 }
 
-private Value prim_binOp(string OP)(in Value[] args...) /*pure*/ {
-    assert(args.length == 2);
-    return args[0].opBinary!OP(args[1]);
+unittest {
+    assert(eval(new ExprVar("__currentTime")).integer);
+    assert(eval(new ExprVar("__typeOf")).primOpArgs);
+    assert("int" == eval(new ExprBinaryOp(Tok.APP, new ExprVar("__typeOf"), new ExprInt(2))).str);
+    assert(eval(new ExprVar("__add")).primOpArgs);
+    assert(eval(new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2))).primOpArgs);
+    assert(5 == eval(new ExprBinaryOp(Tok.APP, new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2)), new ExprInt(3))).integer);
 }
 
-private Value prim_typeOf(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    return Value(forceValue(args[0], Loc()).typeOf, null);
-}
-
-private Value prim_isNull(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    return Value(args[0].isNull);
-}
-
-private Value prim_lessThan(in Value[] args...) /*pure*/ {
-    assert(args.length == 2);
-    return Value(args[0] < args[1]);
-}
-
-private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
-    auto value = forceValue(v, Loc());
+string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
+    auto value = forceValue(v);
     switch (value.type) {
     case Type.String:
         return value.str;
@@ -111,6 +131,7 @@ private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
         return coerceToString(*i, coerceMore);
     // case Type.External: todo
     default:
+        break;
     }
     if (coerceMore) {
         switch (value.type) {
@@ -129,155 +150,46 @@ private string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
         case Type.Float:
             return value.toString();
         default:
+            break;
         }
     }
-    assert(0, "cannot coerce to a string");
+    assert(0, "cannot coerce "~value.typeOf~" to a string");
 }
 
 unittest {
     assert("" == coerceToString(Value(), true));
 }
 
-private Value prim_toString(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    return Value(args[0].toString());
-}
-
-private Value prim_throw(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    throw new Error(args[0].str);
-}
-
-private Value prim_abort(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    throw new Error("evaluation aborted with the following error message: "~args[0].str);
-}
-
-private Value elemAt(in Value list, long n) pure {
-    return list.list[n];
-}
-
-private Value primop_elemAt(in Value[] args...) /*pure*/ {
-    assert(args.length == 2);
-    return elemAt(args[0], args[1].integer);
-}
-
-private Value primop_head(in Value[] args...) /*pure*/ {
-    assert(args.length == 1);
-    return elemAt(args[0], 0);
-}
-
-private const Env staticBaseEnv;
-
-static this() {
-    import core.stdc.time : time;
-
-    static Value notImplemented(in Value[] args...) /*pure*/ {
-        assert(0, "not implemented");
-    }
-
-    Bindings globals = [
-        "abort" : Value(&notImplemented), "__add" : Value(&prim_binOp!"+"),
-        "__addErrorContext" : Value(&notImplemented), "__all" : Value(&notImplemented),
-        "__any" : Value(&notImplemented), "__appendContext" : Value(&notImplemented),
-        "__attrNames" : Value(&notImplemented), "__attrValues" : Value(&notImplemented),
-        "baseNameOf" : Value(&notImplemented), "__bitAnd" : Value(&notImplemented),
-        "__bitOr" : Value(&notImplemented), "__bitXor" : Value(&notImplemented),
-        "__catAttrs" : Value(&notImplemented), "__compareVersions" : Value(&notImplemented),
-        "__concatLists" : Value(&notImplemented), "__concatMap" : Value(&notImplemented),
-        "__concatStringsSep" : Value(&notImplemented), "__currentSystem" : Value("x86_64-darwin", null),
-        "__currentTime" : Value(time(null)), "__deepSeq" : Value(&notImplemented),
-        "derivation" : Value(&notImplemented), //lambda
-        "derivationStrict" : Value(&notImplemented),
-        "dirOf" : Value(&notImplemented), "__div" : Value(&prim_binOp!"/"),
-        "__elem" : Value(&notImplemented), "__elemAt" : Value(&primop_elemAt),
-        "false" : Value(false), "fetchGit" : Value(&notImplemented),
-        "fetchMercurial" : Value(&notImplemented), "fetchTarball" : Value(&notImplemented),
-        "__fetchurl" : Value(&notImplemented), "__filter" : Value(&notImplemented),
-        "__filterSource" : Value(&notImplemented), "__findFile" : Value(&notImplemented),
-        "__foldl'" : Value(&notImplemented), "__fromJSON" : Value(&notImplemented),
-        "fromTOML" : Value(&notImplemented), "__functionArgs" : Value(&notImplemented),
-        "__genList" : Value(&notImplemented), "__genericClosure" : Value(&notImplemented),
-        "__getAttr" : Value(&notImplemented), "__getContext" : Value(&notImplemented),
-        "__getEnv" : Value(&notImplemented), "__hasAttr" : Value(&notImplemented),
-        "__hasContext" : Value(&notImplemented), "__hashFile" : Value(&notImplemented),
-        "__hashString" : Value(&notImplemented), "__head" : Value(&primop_head),
-        "import" : Value(&notImplemented), //primOpApp
-        "__intersectAttrs" : Value(&notImplemented),
-        "__isAttrs" : Value(&notImplemented),
-        "__isBool" : Value(&notImplemented), "__isFloat" : Value(&notImplemented),
-        "__isFunction" : Value(&notImplemented), "__isInt" : Value(&notImplemented),
-        "__isList" : Value(&notImplemented), "isNull" : Value(&prim_isNull),
-        "__isPath" : Value(&notImplemented), "__isString" : Value(&notImplemented),
-        "__langVersion" : Value(5), "__length" : Value(&notImplemented),
-        "__lessThan" : Value(&prim_lessThan), "__listToAttrs" : Value(&notImplemented),
-        "map" : Value(&notImplemented), "__mapAttrs" : Value(&notImplemented),
-        "__match" : Value(&notImplemented), "__mul" : Value(&prim_binOp!"*"),
-        "__nixPath" : Value(cast(Value[])[]), "__nixVersion" : Value("2.3.4", null), //FIXME
-        "null" : Value(), "__parseDrvName" : Value(&notImplemented),
-        "__partition" : Value(&notImplemented), "__path" : Value(&notImplemented),
-        "__pathExists" : Value(&notImplemented), "placeholder" : Value(&notImplemented),
-        "__readDir" : Value(&notImplemented), "__readFile" : Value(&notImplemented),
-        "removeAttrs" : Value(&notImplemented), "__replaceStrings" : Value(&notImplemented),
-        "scopedImport" : Value(&notImplemented), "__seq" : Value(&notImplemented),
-        "__sort" : Value(&notImplemented), "__split" : Value(&notImplemented),
-        "__splitVersion" : Value(&notImplemented), "__storeDir" : Value("/nix/store"),
-        "__storePath" : Value(&notImplemented), "__stringLength" : Value(&notImplemented),
-        "__sub" : Value(&prim_binOp!"-"), "__substring" : Value(&notImplemented),
-        "__tail" : Value(&notImplemented), "throw" : Value(&prim_throw),
-        "__toFile" : Value(&notImplemented), "__toJSON" : Value(&notImplemented),
-        "__toPath" : Value(&notImplemented), "toString" : Value(&prim_toString),
-        "__toXML" : Value(&notImplemented), "__trace" : Value(&notImplemented),
-        "true" : Value(true), "__tryEval" : Value(&notImplemented),
-        "__typeOf" : Value(&prim_typeOf),
-        "__unsafeDiscardOutputDependency" : Value(&notImplemented),
-        "__unsafeDiscardStringContext" : Value(&notImplemented),
-        "__unsafeGetAttrPos" : Value(&notImplemented), "__valueSize" : Value(&notImplemented),
-    ];
-
-    Bindings builtins;
-    foreach (k, v; globals) {
-        import std.string : strip;
-        builtins[strip(k, "_")] = v;
-    }
-    globals["builtins"] = builtins["builtins"] = Value(builtins);
-    staticBaseEnv.vars = globals;
-}
-
-unittest {
-    assert(staticBaseEnv.vars["builtins"].type == Type.Attrs);
-    assert(staticBaseEnv.vars["builtins"].attrs["builtins"].type == Type.Attrs);
-}
-
-class Thunker : Visitor {
+private class Thunker : Visitor {
     const(Env) *env;
     Value value;
 
-    this(in ref Env env) {
-        this.env = &env;
+    this(in Env* env) {
+        assert(env);
+        this.env = env;
     }
 
-    const(Value) lookupVar(string name) {
+    const(Value*) lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
-                return *v;
+                return v;
         }
-        assert(0, "undefined variable "~name);
+        return null;
     }
 
 
-    void thunk(in Expr e) {
-        value = Value(e, *env);
+    private void mkThunk(in Expr e) {
+        value = Value(e, env);
     }
 
     void visit(in ExprOpNot e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprBinaryOp e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprInt e) {
@@ -297,43 +209,49 @@ class Thunker : Visitor {
     }
 
     void visit(in ExprVar e) {
-        value = lookupVar(e.name);
+        const v = lookupVar(e.name);
+        // The value might not be initialised in the environment yet.
+        if (v) {
+            value = *v;
+        } else {
+            mkThunk(e);
+        }
     }
 
     void visit(in ExprSelect e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprOpHasAttr e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprAttrs e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprList e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprLambda e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprLet e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprWith e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprIf e) {
-        thunk(e);
+        mkThunk(e);
     }
 
     void visit(in ExprAssert e) {
-        thunk(e);
+        mkThunk(e);
     }
 }
 
@@ -341,11 +259,12 @@ class Evaluator : Visitor {
     const(Env)* env;
     Value value;
 
-    this(const(Env)* env) /*pure*/ {
+    this(in Env* env) /*pure*/ {
+        assert(env);
         this.env = env;
     }
 
-    Value visit(in Expr e) {
+    private Value visit(in Expr e) {
         if (e)
             e.accept(this);
         return value;
@@ -419,7 +338,7 @@ class Evaluator : Visitor {
             assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.APP:
-            value = callFunction(visit(e.left), maybeThunk(e.right, *env), e.loc);
+            value = callFunction(visit(e.left), maybeThunk(e.right, env), e.loc);
             break;
         default:
             assert(0);
@@ -427,13 +346,17 @@ class Evaluator : Visitor {
     }
 
     const(Value) lookupVar(string name) {
+        // debug writeln("lookupVar ",name);
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
+            // if (!curEnv.vars) continue;
+            // debug writeln("lookupVarx ", name, curEnv.vars);
             // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
                 return *v;
         }
-        assert(0, "undefined variable "~name);
+        // debug writeln("lookupVarzz ",name);
+        throw new Error("undefined variable "~name);
     }
 
     void visit(in ExprInt e) {
@@ -461,7 +384,7 @@ class Evaluator : Visitor {
             return an.ident;
         } else {
             visit(an.expr);
-            return forceValue(value, Loc()).str;
+            return forceValue(value).str;
         }
     }
 
@@ -502,12 +425,12 @@ class Evaluator : Visitor {
 
     void visit(in ExprAttrs e) {
         const(Env)* dynamicEnv = env;
-        Bindings attrs;
+        Bindings attrs = empty;
         if (e.recursive) {
             const hasOverrides = "__overrides" in e.attrs;
 
             // Create a new environment that contains the attributes in this `rec'.
-            auto newEnv = Env(env, attrs);
+            auto newEnv = new Env(env, attrs);
 
             // The recursive attributes are evaluated in the new
             // environment, while the inherited attributes are evaluated
@@ -516,9 +439,10 @@ class Evaluator : Visitor {
                 if (hasOverrides && !v.inherited) {
                     attrs[k] = Value(v.value, newEnv);
                 } else {
-                    attrs[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
+                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv);
                 }
             }
+            // debug writeln(__LINE__, newEnv.vars);
 
             // If the rec contains an attribute called `__overrides', then
             // evaluate it, and add the attributes in that set to the rec.
@@ -539,10 +463,13 @@ class Evaluator : Visitor {
                     newBnds[k] = v; // overwrites
                 }
             }
-            dynamicEnv = &newEnv;
+            // *newEnv = Env(env, attrs);
+            dynamicEnv = newEnv;
+            const x = attrs;
+            assert(dynamicEnv.vars == x);
         } else {
             foreach (k, v; e.attrs) {
-                attrs[k] = maybeThunk(v.value, *env);
+                attrs[k] = maybeThunk(v.value, env);
             }
         }
         // Dynamic attrs apply *after* rec and __overrides.
@@ -554,40 +481,40 @@ class Evaluator : Visitor {
             }
             const nameSym = nameVal.str;
             assert(nameSym !in attrs, "dynamic attribute already defined");
-            attrs[nameSym] = maybeThunk(v.value, *dynamicEnv);
+            attrs[nameSym] = maybeThunk(v.value, dynamicEnv);
         }
+        // debug writeln(__LINE__, attrs);
         value = Value(attrs);
     }
 
     void visit(in ExprList e) {
         Value[] vars;
         foreach (v; e.elems)
-            vars ~= maybeThunk(v, *env);
+            vars ~= maybeThunk(v, env);
         value = Value(vars);
     }
 
     void visit(in ExprLambda e) {
-        value = Value(e, *env);
+        value = Value(e, env);
     }
 
     void visit(in ExprLet e) {
-        Bindings b;
+        Bindings b = empty;
         // Create a new environment that contains the attributes in this `let'.
-        auto newEnv = Env(env, b);
+        auto newEnv = new Env(env, b);
         foreach (k, v; e.attrs.attrs) {
-            b[k] = maybeThunk(v.value, v.inherited ? *env : newEnv);
+            b[k] = maybeThunk(v.value, v.inherited ? env : newEnv);
         }
-        env = &newEnv;
+        env = newEnv;
         visit(e.body);
         env = newEnv.up;
     }
 
     void visit(in ExprWith e) {
-        debug writeln(e.attrs);
+        // debug writeln(e.attrs);
         auto att = visit(e.attrs);// TODO: make lazy
-        assert(att.type == Type.Attrs, to!string(att.type) ~ ", expected attrs");
-        const newEnv = Env(env, att.attrs);
-        env = &newEnv;
+        const newEnv = new Env(env, att.attrs);
+        env = newEnv;
         visit(e.body);
         env = newEnv.up;
     }
@@ -605,8 +532,9 @@ class Evaluator : Visitor {
     }
 }
 
-public Value eval(in Expr e, in Env *env = &staticBaseEnv) /*pure*/ {
-    auto ev = new Evaluator(env);
+public Value eval(in Expr e, ref in Env env = staticBaseEnv) /*pure*/ {
+    assert(e);
+    auto ev = new Evaluator(&env);
     e.accept(ev);
     return ev.value;
 }
@@ -615,22 +543,30 @@ unittest {
     auto ZERO = new ExprInt(0);
     auto false_ = new ExprVar("false");
     auto true_ = new ExprVar("true");
+    auto ok = Value("ok", null);
 
     assert(eval(new ExprBinaryOp(Tok.SUB, ZERO, new ExprFloat(3))) == Value(-3.0));
     assert(eval(new ExprBinaryOp(Tok.AND, false_, true_)) == Value(false));
     assert(eval(new ExprBinaryOp(Tok.OR, false_, true_)) == Value(true));
 
     auto att = new ExprAttrs();
-    att.attrs["a"] = AttrDef(new ExprString("ok"));
-    att.attrs["true"] = AttrDef(true_, true);
-    debug writeln(eval(att));
-    assert(forceValue(eval(att), Loc()) == Value(["a": Value("ok", null), "true": Value(true)]));
-    att.dynamicAttrs ~= DynamicAttrDef(new ExprString("b"), new ExprString("p"));
-    assert(eval(att) == Value(["a": Value("ok", null), "true": Value(true), "b": Value("p", null)]));
+    // { a = "ok"; }
+    att.attrs["a"] = ExprAttrs.AttrDef(new ExprString("ok"));
+    assert(eval(att) == Value(["a": ok]));
+    // { a = "ok"; true = true; }
+    att.attrs["true"] = ExprAttrs.AttrDef(true_, true);
+    assert(eval(att) == Value(["a": ok, "true": Value(true)]));
+    // { a = "ok"; true = true; b = "p"; }
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString("b"), new ExprString("p"));
+    assert(eval(att) == Value(["a": ok, "true": Value(true), "b": Value("p", null)]));
+    // rec { a = "ok"; true = true; b = "p"; }
     att.recursive = true;
-    att.attrs["c"] = AttrDef(new ExprVar("a"));
-    att.dynamicAttrs ~= DynamicAttrDef(new ExprString("d"), new ExprVar("b"));
-    assert(eval(att) == Value(["a": Value("ok",null), "true": Value(true), "b": Value("ok", null)])); //needs `rec`
+    // rec { a = "ok"; true = true; b = "p"; c = a; }
+    att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar("a"));
+    assert(eval(att).forceValueDeep == Value(["a": ok, "true": Value(true), "b": Value("p", null), "c": ok])); //needs `rec`
+    // rec { a = "ok"; true = true; b = "p"; c = a; d = b; }
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString("d"), new ExprVar("b"));
+    assert(eval(att).forceValueDeep == Value(["a": ok, "true": Value(true), "b": Value("p", null), "c": ok, "d": Value("p", null)])); //needs `rec`
     assert(eval(new ExprFloat(1.1)) == Value(1.1));
     assert(eval(new ExprInt(42)) == Value(42));
     assert(eval(new ExprString("foo")) == Value("foo", null));
@@ -638,10 +574,10 @@ unittest {
     assert(eval(false_) == Value(false));
     assert(eval(new ExprVar("null")) == Value());
     assert(eval(true_) == Value(true));
-    assert(eval(new ExprAssert(true_, new ExprString("ok"))) == Value("ok", null));
+    assert(eval(new ExprAssert(true_, new ExprString("ok"))) == ok);
     assert(eval(new ExprOpNot(true_)) == Value(false));
     assert(eval(new ExprOpNot(false_)) == Value(true));
-    assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == Value("ok", null));
-    assert(eval(new ExprIf(false_, new ExprFloat(1.1), new ExprString("ok"))) == Value("ok", null));
-    assert(eval(new ExprList([new ExprString("ok")])) == Value([Value("ok", null)]));
+    assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == ok);
+    assert(eval(new ExprIf(false_, new ExprFloat(1.1), new ExprString("ok"))) == ok);
+    assert(eval(new ExprList([new ExprString("ok")])) == Value([ok]));
 }

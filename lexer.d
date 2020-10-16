@@ -764,7 +764,7 @@ Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRan
 struct TokenRange(R) if (isForwardRange!R) {
     private R input;
 
-    Loc loc = Loc(1);
+    private Loc loc = Loc(1);
     Token front;
 
     this(in R input) {
