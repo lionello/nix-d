@@ -71,31 +71,9 @@ string typeOf(in Value v) @nogc @safe pure nothrow {
     }
 }
 
-private string escapeString(string s) @safe pure nothrow {
-    char[] buf;
-    buf.reserve(s.length + 2);
-    buf ~= '"';
-    foreach (c; s) {
-        switch (c) {
-        case '\\': buf ~= `\\`; break;
-        case '$': buf ~= `\$`; break;
-        case '"': buf ~= `\"`; break;
-        case '\t': buf ~= `\t`; break;
-        case '\n': buf ~= `\n`; break;
-        case '\r': buf ~= `\r`; break;
-        default: buf ~= c; break;
-        }
-    }
-    buf ~= '"';
-    return buf;
-}
-
-unittest {
-    static assert(escapeString("x\\$\"\n\t\r") == `"x\\\$\"\n\t\r"`);
-}
+alias PathSet = bool[string];
 
 struct Value {
-    // static auto EMPTY = Value(cast(Value[])[]);
     static immutable NULL = Value();
     static immutable FALSE = Value(false);
     static immutable TRUE = Value(true);
@@ -103,7 +81,7 @@ struct Value {
     private union {
         struct {
             string s;
-            // string[] context; TODO
+            // PathSet c;
         }
 
         // string path;
@@ -117,16 +95,20 @@ struct Value {
             const(Expr) t;
             const(Env)* e;
         }
-        PrimOp p;
+        PrimOp op;
     }
     Type type;
 
-    this(string str, in string[] context) pure {
+    this(string str, PathSet context) pure {
         this.type = Type.String;
         this.s = str;
+        // this.c = context;
     }
 
     this(string path) pure {
+        assert(path != "", "Path should not be empty");
+        assert(path[0] == '/', "Path should be absolute: "~path);
+        assert(path == "/" || path[$-1] != '/', "Path has trailing slash: "~path);
         this.type = Type.Path;
         this.s = path;
     }
@@ -175,7 +157,7 @@ struct Value {
     this(PrimOp primOp) pure {
         assert(primOp);
         this.type = Type.PrimOp;
-        this.p = primOp;
+        this.op = primOp;
     }
 
     this(PrimOp primOp, in Value[] args...) pure {
@@ -256,7 +238,7 @@ struct Value {
     @property PrimOp primOp() pure const nothrow {
         if (type == Type.PrimOpApp) return l[0].primOp;
         assert(type == Type.PrimOp, "value is "~typeOf(this)~" while a function was expected");
-        return p;
+        return op;
     }
 
     @property const(Value)[] primOpArgs() pure const nothrow {
@@ -264,36 +246,54 @@ struct Value {
         return l[1..$];
     }
 
+    @property PathSet context() pure const nothrow {
+        if (type == Type.Path) return [s:true];
+        assert(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
+        return null;
+    }
+
     Value opBinary(string OP)(auto ref const Value rhs) pure const {
         switch (this.type) {
         case Type.Float:
+            static if (OP == "+" || OP == "-" || OP == "*" || OP == "/") {
             switch(rhs.type) {
-            case Type.Float:
-                return Value(mixin("this.f" ~ OP ~ "rhs.f"));
             case Type.Int:
                 return Value(mixin("this.f" ~ OP ~ "rhs.i"));
-            default: assert(0, "cannot add to float");
+            case Type.Float:
+                return Value(mixin("this.f" ~ OP ~ "rhs.f"));
+            default:
             }
+            }
+            break;
         case Type.Int:
             switch(rhs.type) {
-            case Type.Float:
-                return Value(mixin("this.i" ~ OP ~ "rhs.f"));
             case Type.Int:
                 return Value(mixin("this.i" ~ OP ~ "rhs.i"));
-            default: assert(0, "cannot add to integer");
+            case Type.Float:
+                static if (OP == "+" || OP == "-" || OP == "*" || OP == "/") {
+                return Value(mixin("this.i" ~ OP ~ "rhs.f"));
+                }
+            default:
             }
+            break;
         case Type.Path:
             static if (OP == "+") {
             assert(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
-            return Value(this.s ~ rhs.s);
+            const lhs = this.s == "/." ? "/" : this.s;
+            // FIXME: canonicalize
+            import std.path : asNormalizedPath;
+            return Value(asNormalizedPath(lhs ~ rhs.s).array);
             }
         case Type.String:
             static if (OP == "+") {
             assert(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
-            return Value(this.s ~ rhs.s, null);
+            PathSet ps = this.context().dup;
+            foreach (k, v; rhs.context()) ps[k] = v;
+            return Value(this.s ~ rhs.s, ps);
             }
-        default: assert(0, "No operator "~OP~" for type "~typeOf(this));
+        default:
         }
+        assert(0, "No operator "~OP~" for type "~typeOf(this));
     }
 
     private static int cmp(L,R)(ref const L lhs, ref const R rhs) @nogc pure @safe {
@@ -309,21 +309,24 @@ struct Value {
                 return cmp(this.f, rhs.f);
             case Type.Int:
                 return cmp(this.f, rhs.i);
-            default: assert(0, "cannot compare to float");
+            default:
             }
+            break;
         case Type.Int:
             switch(rhs.type) {
             case Type.Float:
                 return cmp(this.i, rhs.f);
             case Type.Int:
                 return cmp(this.i, rhs.i);
-            default: assert(0, "cannot compare to integer");
+            default:
             }
+            break;
         case Type.Path:
         case Type.String:
             return cmp(this.s, rhs.s);
-        default: assert(0, "cannot compare type "~typeOf(this));
+        default:
         }
+        assert(0, "cannot compare type "~typeOf(this));
     }
 
     bool opEquals()(auto ref const Value v) @nogc pure const {
@@ -353,12 +356,14 @@ struct Value {
         }
     }
 
-    string toString() const /*pure*/ {
+    string toString(bool shallow = false) const /*pure*/ {
         final switch (type) {
         case Type.Null:
             return "null";
         case Type.Path:
+            return s;
         case Type.String:
+            import nix.printer : escapeString;
             return escapeString(s);
         case Type.Int:
             return to!string(i);
@@ -375,13 +380,15 @@ struct Value {
         case Type.Bool:
             return b ? "true" : "false";
         case Type.List:
+            if (shallow) return "[…]";
             auto s = "[ ";
-            foreach (e; l) s ~= e.toString() ~ ' ';
+            foreach (e; l) s ~= e.toString(true) ~ ' ';
             return s ~ ']';
         case Type.Attrs:
+            if (shallow) return "{…}";
             auto s = "{ ";
             // FIXME: detect infinite recursion
-            // foreach (k, v; a) s ~= k ~ " = " ~ v.toString() ~ "; ";
+            foreach (k, v; a) s ~= k ~ " = " ~ v.toString(true) ~ "; ";
             return s ~ '}';
         case Type.Lambda:
             return "<LAMBDA>";
@@ -403,8 +410,8 @@ pure unittest {
     assert(Value() != Value(1));
     assert(Value(2) == Value(2.0));
     assert(Value(2.5) != Value(2));
-    assert(Value("a") == Value("ba"[1..$]));
-    assert(Value("a") != Value());
+    assert(Value("/a") == Value("b/a"[1..$]));
+    assert(Value("a", null) != Value());
     assert(Value(true) == Value(true));
     assert(Value(false) == Value(false));
     assert(Value(false) != Value(true));
@@ -417,7 +424,7 @@ unittest {
     assert(Value().toString() == "null");
     assert(Value(2).toString() == "2");
     assert(Value(2.5).toString() == "2.5");
-    assert(Value("hello\n").toString() == `"hello\n"`);
+    assert(Value("hello\n", null).toString() == `"hello\n"`);
     assert(Value(true).toString() == "true");
     assert(Value(false).toString() == "false");
     assert(Value([Value()]).toString() == "[ null ]");
@@ -434,6 +441,7 @@ pure unittest {
     assert(Value("/a") + Value("/b") == Value("/a/b"));
     assert(Value("/a") + Value("str", null) == Value("/astr"));
     // assert(Value("a", null) + Value("/b") == Value("a/nix/store/asdf-b", null)); TODO
+    assert(Value("/.") + Value("str/", null) == Value("/str"));
 
     assert(Value(3) < Value(12));
     assert(Value(1.0) < Value(2));

@@ -5,6 +5,7 @@ import std.stdio : writeln, write;
 import nix.evaluator : eval, forceValueDeep;
 import nix.lexer : TokenRange;
 import nix.parser : parse;
+import nix.printer;
 
 void main(string[] args) {
     import std.file : readText;
@@ -17,7 +18,10 @@ void main(string[] args) {
         auto tr = TokenRange!string(s);
         scope (failure)
             writeln(filename, ", error on line ", tr.front.loc.line);
-        const value = eval(parse(tr)).forceValueDeep;
+        const ast = parse(tr);
+        print(ast);
+        write("=");
+        const value = eval(ast).forceValueDeep;
         writeln(value);
         // Compare with exp
         const exp = readText(filename.replace(".nix", ".exp")).strip();

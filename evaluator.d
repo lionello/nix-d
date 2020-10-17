@@ -119,6 +119,7 @@ string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
     case Type.String:
         return value.str;
     case Type.Path:
+        // TODO: make absolute/canon?
         return value.path;
     case Type.Attrs:
         auto toString = "__toString" in value.attrs;
@@ -160,6 +161,17 @@ unittest {
     assert("" == coerceToString(Value(), true));
 }
 
+string coerceToPath(in Value v) {
+    const path = coerceToString(v, false);
+    if (path == "" || path[0] != '/') throw new Error("string "~path~" doesn't represent an absolute path");
+    return path;
+}
+
+private string canonicalPath(string p) @safe {
+    import std.path : expandTilde, absolutePath, asNormalizedPath;
+    return asNormalizedPath(absolutePath(expandTilde(p))).array;
+}
+
 private class Thunker : Visitor {
     const(Env) *env;
     Value value;
@@ -184,6 +196,10 @@ private class Thunker : Visitor {
         value = Value(e, env);
     }
 
+    void visit(in ExprNop e) {
+        e.expr.accept(this);
+    }
+
     void visit(in ExprOpNot e) {
         mkThunk(e);
     }
@@ -205,7 +221,7 @@ private class Thunker : Visitor {
     }
 
     void visit(in ExprPath e) {
-        value = Value(e.p);
+        value = Value(canonicalPath(e.p));
     }
 
     void visit(in ExprVar e) {
@@ -270,6 +286,10 @@ class Evaluator : Visitor {
         return value;
     }
 
+    void visit(in ExprNop e) {
+        visit(e.expr);
+    }
+
     void visit(in ExprOpNot e) {
         visit(e.expr);
         value = Value(!value.boolean);
@@ -305,6 +325,7 @@ class Evaluator : Visitor {
         case Tok.ADD:
             value = visit(e.left) + visit(e.right);
             break;
+        case Tok.NEGATE:
         case Tok.SUB:
             value = visit(e.left) - visit(e.right);
             break;
@@ -346,7 +367,6 @@ class Evaluator : Visitor {
     }
 
     const(Value) lookupVar(string name) {
-        // debug writeln("lookupVar ",name);
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (!curEnv.vars) continue;
             // debug writeln("lookupVarx ", name, curEnv.vars);
@@ -355,7 +375,6 @@ class Evaluator : Visitor {
             if (v)
                 return *v;
         }
-        // debug writeln("lookupVarzz ",name);
         throw new Error("undefined variable "~name);
     }
 
@@ -372,7 +391,7 @@ class Evaluator : Visitor {
     }
 
     void visit(in ExprPath e) {
-        value = Value(e.p);
+        value = Value(canonicalPath(e.p));
     }
 
     void visit(in ExprVar e) {
@@ -570,7 +589,7 @@ unittest {
     assert(eval(new ExprFloat(1.1)) == Value(1.1));
     assert(eval(new ExprInt(42)) == Value(42));
     assert(eval(new ExprString("foo")) == Value("foo", null));
-    assert(eval(new ExprPath("fo/o")) == Value("fo/o"));
+    assert(eval(new ExprPath("/fo/o")) == Value("/fo/o"));
     assert(eval(false_) == Value(false));
     assert(eval(new ExprVar("null")) == Value());
     assert(eval(true_) == Value(true));

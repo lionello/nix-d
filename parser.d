@@ -1,7 +1,8 @@
 module nix.parser;
 
-debug import std.stdio : writeln;
+debug(PARSER) import std.stdio : writeln;
 import std.conv : to;
+import nix.printer : format;
 
 public import nix.lexer;
 
@@ -26,6 +27,7 @@ struct AttrName {
 alias AttrPath = AttrName[];
 
 interface Visitor {
+    void visit(in ExprNop);
     void visit(in ExprOpNot);
     void visit(in ExprBinaryOp);
     void visit(in ExprInt);
@@ -47,6 +49,18 @@ interface Visitor {
 abstract class Expr {
     Loc loc; // TODO
     abstract void accept(Visitor v) const;
+}
+
+class ExprNop : Expr {
+    Expr expr;
+    this(Expr expr) pure nothrow {
+        assert(expr);
+        this.expr = expr;
+    }
+
+    override void accept(Visitor v) const {
+        v.visit(this);
+    }
 }
 
 class ExprOpNot : Expr {
@@ -433,11 +447,12 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.LEFT_PARENS:
         input.popFront(); // eat the (
         auto e = parseExpression(input);
-        debug(PARSER) writeln("parseSimple: parseExpression returned ", e);
+        debug(PARSER) writeln("parseSimple: parseExpression returned ", format(e));
         assert(e, input.front.s);
         assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
         input.popFront(); // eat the )
-        return e;
+        // Wrap the resulting expression in a NOP to avoid assoc reshuffling
+        return new ExprNop(e);
     case Tok.INT:
         input.popFront();
         return new ExprInt(to!NixInt(t.s));
@@ -483,7 +498,7 @@ unittest {
     assert(cast(ExprVar) parse("false"));
     assert(cast(ExprVar) parse("a"));
     assert(cast(ExprInt) parse("2"));
-    assert(cast(ExprInt) parse("(2)"));
+    assert(cast(ExprNop) parse("(2)"));
     assert(cast(ExprFloat) parse("2."));
     assert(cast(ExprString) parse(`"str"`));
     assert(cast(ExprString) parse(`''\n str''`));
@@ -593,6 +608,7 @@ public alias parse = parseExpression;
 
 /// Parse the tokens from the given range into an expression tree.
 private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
+    debug(PARSER) scope(exit) writeln("parseExpression <- ");
     const t = input.front;
     switch (t.tok) {
     case Tok.IDENTIFIER: // args@ or args: or func val or set.attr
@@ -687,6 +703,7 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
 }
 
 private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
+    debug(PARSER) scope(exit) writeln("parseIf <- ");
     switch (input.front.tok) {
     case Tok.IF:
         input.popFront(); // eat the if
@@ -708,10 +725,12 @@ private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
 
 private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
     debug(PARSER) writeln("parseOp ", input.front.tok, input.front.s);
+    debug(PARSER) scope(exit) writeln("parseOp <- ");
     switch (input.front.tok) {
     case Tok.NOT:
         input.popFront(); // eat the !
         auto expr = parseOp(input);
+        debug(PARSER) writeln("parseOp: parseOp returned ", format(expr));
         if (auto bin = cast(BinaryExpr) expr) {
             const assoc = associativity(Tok.NOT, bin.operator);
             assert(assoc != Associativity.NONE, "Non-associative");
@@ -726,20 +745,26 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.NEGATE:
         input.popFront(); // eat the -
         auto expr = parseOp(input);
+        debug(PARSER) writeln("parseOp: parseOp returned ", format(expr));
+        debug import std.stdio:write,writeln;
+        import nix.printer : print;
+        debug write(' ',Tok.NEGATE,' ');
+        debug print(expr);
         if (auto bin = cast(BinaryExpr) expr) {
             const assoc = associativity(Tok.NEGATE, bin.operator);
+            debug writeln(' ',bin.operator, " => ", assoc);
             assert(assoc != Associativity.NONE, "Non-associative");
             if (assoc == Associativity.LEFT) {
                 // left-associative
-                bin.left = new ExprBinaryOp(Tok.SUB, new ExprInt(0), bin.left);
+                bin.left = new ExprBinaryOp(Tok.NEGATE, new ExprInt(0), bin.left);
                 return bin;
             }
         }
         // right-associative
-        return new ExprBinaryOp(Tok.SUB, new ExprInt(0), expr);
+        return new ExprBinaryOp(Tok.NEGATE, new ExprInt(0), expr);
     default:
         auto left = parseApp(input);
-        debug(PARSER) writeln("parseOp: parseApp returned ", left);
+        debug(PARSER) writeln("parseOp: parseApp returned ", format(left));
     case_op:
         if (!left || input.empty)
             return left;
@@ -755,11 +780,11 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
         case Tok.NEGATE:
             op = Tok.SUB;
             goto case Tok.SUB;
+        case Tok.SUB:
         case Tok.CONCAT:
         case Tok.MUL:
         case Tok.DIV:
         case Tok.ADD:
-        case Tok.SUB:
         case Tok.UPDATE:
         case Tok.LT:
         case Tok.LEQ:
@@ -772,8 +797,15 @@ private Expr parseOp(R)(ref R input) pure if (isTokenRange!R) {
         case Tok.IMPL:
             input.popFront(); // eat the op
             auto right = parseOp(input);
+            debug(PARSER) writeln(__LINE__, " parseOp: parseOp returned ", format(right));
+            debug import std.stdio:write,writeln;
+            import nix.printer : print;
+            debug print(left);
+            debug write(' ',op,' ');
+            debug print(right);
             if (auto bin = cast(BinaryExpr) right) {
                 const assoc = associativity(op, bin.operator);
+                debug writeln(' ',bin.operator, " => ", assoc);
                 assert(assoc != Associativity.NONE, "Non-associative");
                 if (assoc == Associativity.LEFT) {
                     // left-associative
@@ -806,18 +838,21 @@ unittest {
         return e;
     }
 
-    assert(cast(ExprBinaryOp) parse("a + b"));
-    assert(cast(ExprBinaryOp) parse("a && b"));
-    assert(cast(ExprBinaryOp) parse("!a && b"));
-    assert(cast(ExprBinaryOp) parse("-a + b"));
-    assert(cast(ExprBinaryOp) parse("a + b - c"));
+    with(cast(ExprBinaryOp) parse("a + b")) { assert(op == Tok.ADD); }
+    with(cast(ExprBinaryOp) parse("a && b")) { assert(op == Tok.AND); }
+    with(cast(ExprBinaryOp) parse("!a && b")) { assert(op == Tok.AND); }
+    with(cast(ExprBinaryOp) parse("-a + b")) { assert(op == Tok.ADD); }
+    with(cast(ExprBinaryOp) parse("a + b - c")) { assert(op == Tok.SUB); }
     assert(cast(ExprOpHasAttr) parse("a ? b"));
-    assert(cast(ExprBinaryOp) parse("a ? b || c"));
-    assert(cast(ExprBinaryOp) parse("a ? b || c ? d"));
+    with(cast(ExprBinaryOp) parse("a ? b || c")) { assert(op == Tok.OR); }
+    with(cast(ExprBinaryOp) parse("a ? b || c ? d")) { assert(op == Tok.OR); }
     with(cast(ExprBinaryOp) parse("2 * 3 + 4")) { assert(op == Tok.ADD); }
     with(cast(ExprBinaryOp) parse("2 + 3 * 4")) { assert(op == Tok.ADD); }
     with(cast(ExprBinaryOp) parse("2 * 3 + 4 * 4")) { assert(op == Tok.ADD); }
     with(cast(ExprBinaryOp) parse("2 * 3 * 4 + 4")) { assert(op == Tok.ADD); }
+    with(cast(ExprBinaryOp) parse("10 - 6 - -1")) { assert(cast(ExprBinaryOp) left); }
+    with(cast(ExprBinaryOp) parse("(10 - 6) - -1")) { assert(cast(ExprNop) left); }
+    with(cast(ExprBinaryOp) parse("10 - (6 - -1)")) { assert(cast(ExprInt) left); }
     assertThrow(parse("2 == 3 == 4"));
     assertThrow(parse("2 != 3 != 4"));
 }
@@ -825,7 +860,7 @@ unittest {
 private Expr parseApp(R)(ref R input) pure if (isTokenRange!R) {
     debug(PARSER) writeln("parseApp ", input.front.tok, input.front.s);
     auto select = parseSelect(input);
-    debug(PARSER) writeln("parseApp: parseSelect returned ", select);
+    debug(PARSER) writeln("parseApp: parseSelect returned ", format(select));
     if (!select)
         return null;
     while (true) {

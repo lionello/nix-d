@@ -150,6 +150,7 @@ Associativity associativity(Tok left, Tok right) pure {
 unittest {
     assert(associativity(Tok.LEQ, Tok.LEQ) == Associativity.NONE);
     assert(associativity(Tok.MUL, Tok.ADD) == Associativity.LEFT);
+    assert(associativity(Tok.SUB, Tok.SUB) == Associativity.LEFT);
     assert(associativity(Tok.ADD, Tok.MUL) == Associativity.RIGHT);
     assert(associativity(Tok.CONCAT, Tok.CONCAT) == Associativity.RIGHT);
 }
@@ -686,8 +687,8 @@ unittest {
         "a-b_c'" : Tok.IDENTIFIER, "~/asdf" : Tok.HPATH, "~/asd/f" : Tok.HPATH,
         "http://a.com" : Tok.URI,
         "ssh+git://user@pw:a.com:32/b%23?a=b&c=d+e" : Tok.URI, "a/b" : Tok.PATH,
-        "/b" : Tok.PATH, "./b/c" : Tok.PATH, "0/x" : Tok.PATH,
-        "<nixpkgs>" : Tok.SPATH, "<n/p>" : Tok.SPATH,
+        "/b" : Tok.PATH, "./b/c" : Tok.PATH, "0/x" : Tok.PATH, "/a/": Tok.PATH,
+        "<nixpkgs>" : Tok.SPATH, "<n/p>" : Tok.SPATH, "/.": Tok.PATH
     ];
     foreach (s, t; tokens) {
         assert(popNextTok(s, false) == t, s);
