@@ -251,6 +251,7 @@ private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
     auto level = 1;
     while (true) {
         const t = popToken(input, true);
+        if (t.tok == Tok.WHITESPACE || t.tok == Tok.COMMENT) continue;
         tokens ~= t;
         switch (t.tok) {
         case Tok.DOLLAR_CURLY:
@@ -274,10 +275,11 @@ private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
 }
 
 unittest {
-    auto r = `${a+{b="x${a}";}.b}`;
+    auto r = `${a +{b="x${a}";}.b}`;
     assert([
         Token(Tok.DOLLAR_CURLY),
         Token(Tok.IDENTIFIER, "a"),
+        // Token(Tok.WHITESPACE, " "),
         Token(Tok.ADD),
         Token(Tok.LEFT_CURLY),
         Token(Tok.IDENTIFIER, "b"),
@@ -765,17 +767,16 @@ Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRan
 struct TokenRange(R) if (isForwardRange!R) {
     private R input;
 
-    private Loc loc = Loc(1);
     Token front;
 
     this(in R input) {
         this.input = input;
+        this.front.loc = Loc(1);
         popFront();
     }
 
     this(ref return scope const TokenRange!R tr) {
         this.input = tr.input.save();
-        this.loc = tr.loc;
         this.front = tr.front;
     }
 
@@ -792,6 +793,7 @@ struct TokenRange(R) if (isForwardRange!R) {
     }
 
     void popFront() pure {
+        auto loc = front.loc;
         front.tok = Tok.ERROR;
         while (!input.empty) {
             front = popToken(input);
@@ -820,10 +822,10 @@ unittest {
     assert(r.front.tok == Tok.RIGHT_CURLY);
     r.popFront();
     assert(r.empty, r.front.s);
-    assert(r.loc.line == 2);
+    assert(r.front.loc.line == 2);
     assert(!s.empty);
     assert(s.front.tok == Tok.LEFT_CURLY);
-    assert(s.loc.line == 1);
+    assert(s.front.loc.line == 1);
 }
 
 /// Trait to test whether a type implements a forward range for `Token`s.

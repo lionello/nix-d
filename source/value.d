@@ -293,7 +293,7 @@ struct Value {
             }
         default:
         }
-        assert(0, "No operator "~OP~" for type "~typeOf(this));
+        assert(0, "No operator "~OP~" for type "~typeOf(this)~" and "~typeOf(rhs));
     }
 
     private static int cmp(L,R)(ref const L lhs, ref const R rhs) @nogc pure @safe {
@@ -329,7 +329,7 @@ struct Value {
         assert(0, "cannot compare type "~typeOf(this));
     }
 
-    bool opEquals()(auto ref const Value v) @nogc pure const {
+    bool opEquals()(auto ref const Value v) /*@nogc pure*/ const {
         final switch (type) {
         case Type.Null:
             return type == v.type;
@@ -403,7 +403,7 @@ struct Value {
     }
 }
 
-pure unittest {
+unittest {
     static assert(24 <= Value.sizeof);
 
     assert(Value() == Value());
@@ -428,10 +428,10 @@ unittest {
     assert(Value(true).toString() == "true");
     assert(Value(false).toString() == "false");
     assert(Value([Value()]).toString() == "[ null ]");
-    // assert(Value(["n":Value()]).toString() == "{ n = null; }");
+    assert(Value(["n":Value()]).toString() == "{ n = null; }");
 }
 
-pure unittest {
+unittest {
     assert(Value(3) * Value(2) == Value(6));
     assert(Value(5) / Value(2) == Value(2));
     assert(Value(3) / Value(2.0) == Value(1.5));

@@ -1,5 +1,7 @@
 module nix.primops;
 
+debug import std.stdio:writeln;
+
 import nix.value, nix.evaluator;
 
 private Value genList(Value func, Value count) {
@@ -11,84 +13,55 @@ private Value genList(Value func, Value count) {
     return Value(list);
 }
 
-private Value prim_any(in Value[] args...) /*pure*/ {
-    if (args.length < 2) return Value(&prim_any, args);
-    assert(args.length == 2);
-    foreach (e; forceValue(args[1], Loc()).list) {
-        if (callFunction(args[0], e, Loc()).boolean)
+private Value any(in Value fun, in Value list) /*pure*/ {
+    foreach (e; forceValue(list).list) {
+        if (callFunction(fun, e, Loc()).boolean)
             return Value.TRUE;
     }
     return Value.FALSE;
 }
 
-private Value prim_all(in Value[] args...) /*pure*/ {
-    if (args.length < 2) return Value(&prim_all, args);
-    assert(args.length == 2);
-    foreach (e; forceValue(args[1], Loc()).list) {
-        if (!callFunction(args[0], e, Loc()).boolean)
+private Value all(in Value fun, in Value list) /*pure*/ {
+    foreach (e; forceValue(list).list) {
+        if (!callFunction(fun, e, Loc()).boolean)
             return Value.FALSE;
     }
     return Value.TRUE;
 }
 
-private Value prim_binOp(string OP)(in Value[] args...) /*pure*/ {
-    assert(args.length == 2);
-    return args[0].opBinary!OP(args[1]);
-}
-
 private Value binOp(string OP)(Value lhs, Value rhs) /*pure*/ {
-    return forceValue(rhs).opBinary!OP(forceValue(lhs));
+    return forceValue(lhs).opBinary!OP(forceValue(rhs));
 }
 
-private Value prim_typeOf(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    return Value(forceValue(args[0], Loc()).typeOf, null);
+private Value typeOf_(in Value arg) /*pure*/ {
+    return Value(forceValue(arg).typeOf, null);
 }
 
-private Value prim_isNull(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    return Value(args[0].isNull);
+private Value isNull(in Value arg) /*pure*/ {
+    return Value(arg.isNull);
 }
 
-private Value prim_lessThan(in Value[] args...) /*pure*/ {
-    if (args.length < 2) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 2);
-    return Value(args[0] < args[1]);
+private Value lessThan(in Value lhs, in Value rhs) /*pure*/ {
+    return Value(lhs < rhs);
 }
-private Value prim_toString(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    return Value(coerceToString(args[0], true));
+private Value toString(in Value arg) /*pure*/ {
+    return Value(coerceToString(arg, true));
 }
 
-private Value prim_throw(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    throw new Error(args[0].str);
+private Value throw_(in Value msg) /*pure*/ {
+    throw new Error(msg.str);
 }
 
-private Value prim_abort(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    throw new Error("evaluation aborted with the following error message: "~args[0].str);
+private Value abort(in Value msg) /*pure*/ {
+    throw new Error("evaluation aborted with the following error message: "~msg.str);
 }
 
-private Value elemAt(in Value list, long n) pure {
-    return list.list[n];
+private Value elemAt(in Value list, in Value index) /*pure*/ {
+    return forceValue(list).list[forceValue(index).integer];
 }
 
-private Value primop_elemAt(in Value[] args...) /*pure*/ {
-    if (args.length < 2) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 2);
-    return elemAt(args[0], args[1].integer);
-}
-
-private Value primop_head(in Value[] args...) /*pure*/ {
-    if (args.length < 1) return Value(&mixin(__FUNCTION__), args);
-    assert(args.length == 1);
-    return elemAt(args[0], 0);
+private Value head(in Value list) /*pure*/ {
+    return forceValue(list).list[0];
 }
 
 private Value foldl_(Value func, Value acc, Value list) {
@@ -120,6 +93,48 @@ private Value wrap(alias F)() {
     return Value(&primop);
 }
 
+private Value getAttr(Value name, Value attrs) {
+    return forceValue(attrs).attrs[forceValue(name).str];
+}
+
+private Value hasAttr(Value name, Value attrs) {
+    return Value((forceValue(name).str in forceValue(attrs).attrs) !is null);
+}
+
+private Value attrValues(Value attrs) {
+    import std.algorithm : sort;
+    Value[] values;
+    auto aa = forceValue(attrs).attrs;
+    foreach (name; aa.keys.sort) {
+        values ~= aa[name];
+    }
+    debug writeln("attrValues=",values);
+    return Value(values);
+}
+
+private Value attrNames(Value attrs) {
+    import std.algorithm : sort;
+    Value[] names;
+    foreach (name; forceValue(attrs).attrs.keys.sort) {
+        names ~= Value(name, null);
+    }
+    debug writeln("attrNames=",names);
+    return Value(names);
+}
+
+private Value map(Value fun, Value list) {
+    Value[] output;
+    foreach (e; forceValue(list).list) {
+        output ~= callFunction(fun, e, Loc());
+    }
+    debug writeln("map=",output);
+    return Value(output);
+}
+
+private Value tail(Value list) {
+    return Value(forceValue(list).list[1..$]);
+}
+
 const Env staticBaseEnv;
 
 static this() {
@@ -130,10 +145,10 @@ static this() {
     }
 
     Bindings globals = [
-        "abort" : Value(&prim_abort), "__add" : wrap!(binOp!"+")(),
-        "__addErrorContext" : Value(&notImplemented), "__all" : Value(&prim_all),
-        "__any" : Value(&prim_any), "__appendContext" : Value(&notImplemented),
-        "__attrNames" : Value(&notImplemented), "__attrValues" : Value(&notImplemented),
+        "abort" : wrap!abort(), "__add" : wrap!(binOp!"+")(),
+        "__addErrorContext" : Value(&notImplemented), "__all" : wrap!all(),
+        "__any" : wrap!any(), "__appendContext" : Value(&notImplemented),
+        "__attrNames" : wrap!attrNames(), "__attrValues" : wrap!attrValues(),
         "baseNameOf" : Value(&notImplemented), "__bitAnd" :  wrap!(binOp!"&")(),
         "__bitOr" :  wrap!(binOp!"|")(), "__bitXor" :  wrap!(binOp!"^")(),
         "__catAttrs" : Value(&notImplemented), "__compareVersions" : Value(&notImplemented),
@@ -142,8 +157,8 @@ static this() {
         "__currentTime" : Value(time(null)), "__deepSeq" : Value(&notImplemented),
         "derivation" : Value(&notImplemented), //lambda
         "derivationStrict" : Value(&notImplemented),
-        "dirOf" : Value(&notImplemented), "__div" : Value(&prim_binOp!"/"),
-        "__elem" : Value(&notImplemented), "__elemAt" : Value(&primop_elemAt),
+        "dirOf" : Value(&notImplemented), "__div" : wrap!(binOp!"/")(),
+        "__elem" : Value(&notImplemented), "__elemAt" : wrap!elemAt(),
         "false" : Value(false), "fetchGit" : Value(&notImplemented),
         "fetchMercurial" : Value(&notImplemented), "fetchTarball" : Value(&notImplemented),
         "__fetchurl" : Value(&notImplemented), "__filter" : Value(&notImplemented),
@@ -151,21 +166,21 @@ static this() {
         "__foldl'" : wrap!foldl_(), "__fromJSON" : Value(&notImplemented),
         "fromTOML" : Value(&notImplemented), "__functionArgs" : Value(&notImplemented),
         "__genList" : wrap!genList(), "__genericClosure" : Value(&notImplemented),
-        "__getAttr" : Value(&notImplemented), "__getContext" : Value(&notImplemented),
-        "__getEnv" : Value(&notImplemented), "__hasAttr" : Value(&notImplemented),
+        "__getAttr" : wrap!getAttr(), "__getContext" : Value(&notImplemented),
+        "__getEnv" : Value(&notImplemented), "__hasAttr" : wrap!hasAttr(),
         "__hasContext" : Value(&notImplemented), "__hashFile" : Value(&notImplemented),
-        "__hashString" : Value(&notImplemented), "__head" : Value(&primop_head),
+        "__hashString" : Value(&notImplemented), "__head" : wrap!head(),
         "import" : wrap!import_(),
         "__intersectAttrs" : Value(&notImplemented),
         "__isAttrs" : Value(&notImplemented),
         "__isBool" : Value(&notImplemented), "__isFloat" : Value(&notImplemented),
         "__isFunction" : Value(&notImplemented), "__isInt" : Value(&notImplemented),
-        "__isList" : Value(&notImplemented), "isNull" : Value(&prim_isNull),
+        "__isList" : Value(&notImplemented), "isNull" : wrap!isNull(),
         "__isPath" : Value(&notImplemented), "__isString" : Value(&notImplemented),
         "__langVersion" : Value(5), "__length" : Value(&notImplemented),
-        "__lessThan" : Value(&prim_lessThan), "__listToAttrs" : Value(&notImplemented),
-        "map" : Value(&notImplemented), "__mapAttrs" : Value(&notImplemented),
-        "__match" : Value(&notImplemented), "__mul" : Value(&prim_binOp!"*"),
+        "__lessThan" : wrap!lessThan(), "__listToAttrs" : Value(&notImplemented),
+        "map" : wrap!map(), "__mapAttrs" : Value(&notImplemented),
+        "__match" : Value(&notImplemented), "__mul" : wrap!(binOp!"*")(),
         "__nixPath" : Value(cast(Value[])[]), "__nixVersion" : Value("2.3.4", null), //FIXME
         "null" : Value(), "__parseDrvName" : Value(&notImplemented),
         "__partition" : Value(&notImplemented), "__path" : Value(&notImplemented),
@@ -176,13 +191,13 @@ static this() {
         "__sort" : Value(&notImplemented), "__split" : Value(&notImplemented),
         "__splitVersion" : Value(&notImplemented), "__storeDir" : Value("/nix/store"),
         "__storePath" : Value(&notImplemented), "__stringLength" : Value(&notImplemented),
-        "__sub" : Value(&prim_binOp!"-"), "__substring" : Value(&notImplemented),
-        "__tail" : Value(&notImplemented), "throw" : Value(&prim_throw),
+        "__sub" : wrap!(binOp!"-")(), "__substring" : Value(&notImplemented),
+        "__tail" : wrap!tail(), "throw" : wrap!(throw_)(),
         "__toFile" : Value(&notImplemented), "__toJSON" : Value(&notImplemented),
-        "__toPath" : Value(&notImplemented), "toString" : Value(&prim_toString),
+        "__toPath" : Value(&notImplemented), "toString" : wrap!(toString)(),
         "__toXML" : Value(&notImplemented), "__trace" : Value(&notImplemented),
         "true" : Value(true), "__tryEval" : Value(&notImplemented),
-        "__typeOf" : Value(&prim_typeOf),
+        "__typeOf" : wrap!typeOf_(),
         "__unsafeDiscardOutputDependency" : Value(&notImplemented),
         "__unsafeDiscardStringContext" : Value(&notImplemented),
         "__unsafeGetAttrPos" : Value(&notImplemented), "__valueSize" : Value(&notImplemented),

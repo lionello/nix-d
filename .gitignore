@@ -16,3 +16,4 @@ nix-d-test-*
 .envrc
 main
 lexer
+.vscode

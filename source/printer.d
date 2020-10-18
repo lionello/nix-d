@@ -193,9 +193,10 @@ private class Printer(W) if (isStringWriter!W) : Visitor {
         write("@");
         if (e.formals) {
             write("{");
-            foreach (a; e.formals.elems)
+            foreach (a; e.formals.elems) {
                 write(a.name);
                 write(",");
+            }
             if (e.formals.ellipsis)
                 write("...");
             write("}");

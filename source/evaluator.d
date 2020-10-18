@@ -11,7 +11,7 @@ Value maybeThunk(in Expr e, in Env* env) /*pure*/ {
     return thunker.value;
 }
 
-private Value callPrimOp(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+private Value callPrimOp(Value fun, Value arg, in Loc pos) /*pure*/ {
     // Value p = fun;
     // while (p.type != Type.PrimOp) {
     //     p = p.app[0];
@@ -19,7 +19,7 @@ private Value callPrimOp(in Value fun, in Value arg, in Loc pos) /*pure*/ {
     return fun.primOp()(fun.primOpArgs ~ arg);
 }
 
-Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
+Value callFunction(Value fun, Value arg, in Loc pos) /*pure*/ {
     // debug writeln("callFunction ", fun, arg);
     auto f = forceValue(fun, pos);
     switch(f.type) {
@@ -65,7 +65,7 @@ Value callFunction(in Value fun, in Value arg, in Loc pos) /*pure*/ {
     }
 }
 
-Value forceValueDeep(in Value v) {
+Value forceValueDeep(Value v) {
     // debug writeln("forceValueDeep ", v);
     switch (v.type) {
     case Type.Attrs:
@@ -88,7 +88,7 @@ Value forceValueDeep(in Value v) {
     }
 }
 
-Value forceValue(in Value v, in Loc pos = Loc()) {
+Value forceValue(Value v, in Loc pos = Loc()) {
     // debug writeln("forceValue ", v);
     switch (v.type) {
     case Type.Thunk:
@@ -113,7 +113,7 @@ unittest {
     assert(5 == eval(new ExprBinaryOp(Tok.APP, new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2)), new ExprInt(3))).integer);
 }
 
-string coerceToString(in Value v, bool coerceMore = false) /*pure*/ {
+string coerceToString(Value v, bool coerceMore = false) /*pure*/ {
     auto value = forceValue(v);
     switch (value.type) {
     case Type.String:
@@ -161,7 +161,7 @@ unittest {
     assert("" == coerceToString(Value(), true));
 }
 
-string coerceToPath(in Value v) {
+string coerceToPath(Value v) {
     const path = coerceToString(v, false);
     if (path == "" || path[0] != '/') throw new Error("string "~path~" doesn't represent an absolute path");
     return path;
@@ -271,6 +271,24 @@ private class Thunker : Visitor {
     }
 }
 
+private bool eqValues(Value lhs, Value rhs) {
+    auto l = forceValue(lhs);
+    auto r = forceValue(rhs);
+
+    if (l.type == Type.List && r.type == Type.List) {
+        if (l.list.length != r.list.length) return false;
+        foreach (i, ref v; l.list) {
+            if (!eqValues(v, r.list[i])) return false;
+        }
+        return true;
+    // } else if (l.type == Type.Attrs && r.type == Type.Attrs) {
+    //     if (l.attrs.length != r.attrs.length) return false;
+    } else {
+        // Fallback to opEquals
+        return l == r;
+    }
+}
+
 class Evaluator : Visitor {
     const(Env)* env;
     Value value;
@@ -308,26 +326,30 @@ class Evaluator : Visitor {
             assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.EQ:
-            value = Value(visit(e.left) == visit(e.right));
+            value = Value(eqValues(visit(e.left), visit(e.right)));
             break;
         case Tok.NEQ:
-            value = Value(visit(e.left) != visit(e.right));
+            value = Value(!eqValues(visit(e.left), visit(e.right)));
             break;
         case Tok.CONCAT:
-            value = Value(visit(e.left).list ~ visit(e.right).list);
+            value = Value(forceValue(visit(e.left)).list ~ forceValue(visit(e.right)).list);
             break;
         case Tok.MUL:
-            value = visit(e.left) * visit(e.right);
+            auto __mul = lookupVar("__mul"); // can be overridden
+            value = callFunction(callFunction(__mul, visit(e.left), e.loc), visit(e.right), e.loc);
             break;
         case Tok.DIV:
-            value = visit(e.left) / visit(e.right);
+            auto __div = lookupVar("__div"); // can be overridden
+            value = callFunction(callFunction(__div, visit(e.left), e.loc), visit(e.right), e.loc);
             break;
         case Tok.ADD:
-            value = visit(e.left) + visit(e.right);
+            // Strangely enough, cannot be overridden
+            value = forceValue(visit(e.left)) + forceValue(visit(e.right));
             break;
         case Tok.NEGATE:
         case Tok.SUB:
-            value = visit(e.left) - visit(e.right);
+            auto __sub = lookupVar("__sub"); // can be overridden
+            value = callFunction(callFunction(__sub, visit(e.left), e.loc), visit(e.right), e.loc);
             break;
         case Tok.UPDATE:
             Bindings b;
@@ -340,16 +362,22 @@ class Evaluator : Visitor {
             value = Value(b);
             break;
         case Tok.LT:
-            value = Value(visit(e.left) < visit(e.right));
+            auto __lessThan = lookupVar("__lessThan"); // can be overridden
+            value = callFunction(callFunction(__lessThan, visit(e.left), e.loc), visit(e.right), e.loc);
             break;
         case Tok.LEQ:
-            value = Value(visit(e.left) <= visit(e.right));
+            auto __lessThan = lookupVar("__lessThan"); // can be overridden
+            const gt = callFunction(callFunction(__lessThan, visit(e.right), e.loc), visit(e.left), e.loc);
+            value = Value(!gt.boolean);
             break;
         case Tok.GT:
-            value = Value(visit(e.left) > visit(e.right));
+            auto __lessThan = lookupVar("__lessThan"); // can be overridden
+            value = callFunction(callFunction(__lessThan, visit(e.right), e.loc), visit(e.left), e.loc);
             break;
         case Tok.GEQ:
-            value = Value(visit(e.left) >= visit(e.right));
+            auto __lessThan = lookupVar("__lessThan"); // can be overridden
+            const lt = callFunction(callFunction(__lessThan, visit(e.left), e.loc), visit(e.right), e.loc);
+            value = Value(!lt.boolean);
             break;
         case Tok.IMPL:
             if (visit(e.left).boolean)
