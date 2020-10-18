@@ -45,7 +45,7 @@ private Value lessThan(in Value lhs, in Value rhs) /*pure*/ {
     return Value(lhs < rhs);
 }
 private Value toString(in Value arg) /*pure*/ {
-    return Value(coerceToString(arg, true));
+    return Value(coerceToString(arg, true), null);
 }
 
 private Value throw_(in Value msg) /*pure*/ {

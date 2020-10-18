@@ -438,6 +438,7 @@ class Evaluator : Visitor {
     void visit(in ExprSelect e) {
         visit(e.left);
         foreach (a; e.ap) {
+            value = forceValue(value);
             if (value.type == Type.Attrs) {
                 const j = getName(a) in value.attrs;
                 if (j) {
