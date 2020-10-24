@@ -172,6 +172,7 @@ struct Value {
     }
 
     @property bool isNull() pure const nothrow {
+        assert(type != Type.Thunk, "Must force value first");
         return type == Type.Null;
     }
 
@@ -326,10 +327,10 @@ struct Value {
             return cmp(this.s, rhs.s);
         default:
         }
-        assert(0, "cannot compare type "~typeOf(this));
+        assert(0, "cannot compare type "~typeOf(this)~" with "~typeOf(rhs));
     }
 
-    bool opEquals()(auto ref const Value v) /*@nogc pure*/ const {
+    bool opEquals()(auto ref const Value v) @trusted @nogc pure const nothrow {
         final switch (type) {
         case Type.Null:
             return type == v.type;
@@ -342,6 +343,7 @@ struct Value {
             return f == v.number;
         case Type.Bool:
             return type == v.type && b == v.b;
+        case Type.App:
         case Type.List:
             return type == v.type && l == v.l;
         case Type.Attrs:
@@ -350,7 +352,6 @@ struct Value {
         case Type.PrimOpApp:
         case Type.Lambda:
             return false;
-        case Type.App:
         case Type.Thunk:
             assert(0, "Should forceValue before calling opEquals");
         }
@@ -401,6 +402,34 @@ struct Value {
             return "<PRIMOP-APP>";
         }
     }
+
+    size_t toHash() pure const nothrow @trusted {
+        final switch (type) {
+        case Type.Null:
+            return 0xDAEC0270;
+        case Type.Path:
+            return hashOf(s);
+        case Type.String:
+            return hashOf(s, 0x46FEB33A); // TODO context
+        case Type.Int:
+        case Type.Float:
+            return hashOf(number);
+        case Type.Bool:
+            return b ? 0xCA1C5848 : 0x742D4705;
+        case Type.List:
+        case Type.App:
+            return hashOf(l, type);
+        case Type.Attrs:
+            return hashOf(a);
+        case Type.PrimOp:
+        case Type.PrimOpApp:
+        case Type.Lambda:
+            assert(0, "Can't be hashed");
+        case Type.Thunk:
+            assert(0, "Should forceValue before calling toHash");
+            // return t.toHash ^ env.vars.toHash;
+        }
+    }
 }
 
 unittest {
@@ -449,4 +478,40 @@ unittest {
     assert(Value(1.0) <= Value(2.0));
     assert(Value("/a") < Value("/b"));
     assert(Value("/a", null) < Value("/b", null));
+}
+
+unittest {
+    const map = [
+        Value(): true,
+        Value("/"): true,
+        Value("/string", null): true,
+        Value(2): true,
+        Value(3.0): true,
+        Value(true): true,
+        Value([Value()]): true,
+        Value(["null":Value()]): true,
+        Value(Value("/"), Value(2)): true,
+    ];
+    assert(Value() in map);
+    assert(Value("/") in map);
+    assert(Value("/", null) !in map);
+    assert(Value("/string", null) in map);
+    assert(Value("/string") !in map);
+    assert(Value(2) in map);
+    assert(Value(2.0) in map);
+    assert(Value(3.0) in map);
+    assert(Value(3) in map);
+    assert(Value(4) !in map);
+    assert(Value(true) in map);
+    assert(Value(false) !in map);
+    assert(Value([Value()]) in map);
+    assert(Value([Value(1)]) !in map);
+    assert(Value(["null":Value()]) in map);
+    assert(Value(["null":Value("/")]) !in map);
+    assert(Value(["asdf":Value()]) !in map);
+    assert(Value(Value("/"), Value(2)) in map);
+    assert(Value([Value("/"), Value(2)]) !in map);
+    assert(Value(Value("/"), Value(2.0)) in map);
+    assert(Value(Value("/"), Value(42)) !in map);
+    assert(Value(Value("/", null), Value(2)) !in map);
 }

@@ -1,6 +1,7 @@
 module nix.evaluator;
 
-import nix.value, nix.primops;
+public import nix.value;
+import nix.primops;
 
 debug import std.stdio : writeln;
 
@@ -502,19 +503,13 @@ class Evaluator : Visitor {
             // Hence we need __overrides.)
             if (hasOverrides) {
                 auto vOverrides = forceValue(attrs["__overrides"], e.loc).attrs;
-                Bindings newBnds;
-                foreach (k,v; attrs) {
-                    newBnds[k] = v;
-                }
                 foreach(k,v; vOverrides) {
                     // auto j = k in e.attrs;
-                    newBnds[k] = v; // overwrites
+                    attrs[k] = v; // overwrites
                 }
             }
-            // *newEnv = Env(env, attrs);
             dynamicEnv = newEnv;
-            const x = attrs;
-            assert(dynamicEnv.vars == x);
+            // assert(dynamicEnv.vars is attrs);
         } else {
             foreach (k, v; e.attrs) {
                 attrs[k] = maybeThunk(v.value, env);
@@ -524,14 +519,16 @@ class Evaluator : Visitor {
         foreach (v; e.dynamicAttrs) {
             visit(v.name);
             const nameVal = forceValue(value, e.loc);
+            debug writeln("nameVal:",nameVal);
             if (nameVal.type == Type.Null) {
                 continue;
             }
             const nameSym = nameVal.str;
             assert(nameSym !in attrs, "dynamic attribute already defined");
+            debug writeln("nameSym:",nameSym);
             attrs[nameSym] = maybeThunk(v.value, dynamicEnv);
         }
-        // debug writeln(__LINE__, attrs);
+        debug writeln(__LINE__, attrs);
         value = Value(attrs);
     }
 

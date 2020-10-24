@@ -2,7 +2,7 @@ module nix.main;
 
 import std.stdio : writeln, write;
 
-import nix.evaluator : eval, forceValueDeep;
+import nix.evaluator;
 import nix.lexer : TokenRange;
 import nix.parser : parse;
 import nix.printer;
@@ -21,12 +21,21 @@ void main(string[] args) {
         const ast = parse(tr);
         print(ast);
         write("=");
-        const value = eval(ast).forceValueDeep;
-        writeln(value);
+        auto value = eval(ast);
+        value = value.forceValueDeep;
+        if (value.type == Type.Lambda) {
+            // FIXME: read from .flags file
+            auto lib = eval(parse("import(./lib.nix)"));
+            Bindings b = ["lib": lib, "xyzzy": Value("xyzzy!", null)];
+            value = callFunction(value, Value(b), Loc()).forceValueDeep;
+            value = value.attrs["result"];
+        }
         // Compare with exp
         const exp = readText(filename.replace(".nix", ".exp")).strip();
-        writeln(exp);
-        assert(value.toString() == exp);
+        const value2 = eval(parse(exp)).forceValueDeep;
+        writeln(value);
+        writeln(value2);
+        assert(value == value2);
         writeln("Done.");
     }
 }

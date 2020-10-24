@@ -38,12 +38,13 @@ private Value typeOf_(in Value arg) /*pure*/ {
 }
 
 private Value isNull(in Value arg) /*pure*/ {
-    return Value(arg.isNull);
+    return Value(forceValue(arg).isNull);
 }
 
 private Value lessThan(in Value lhs, in Value rhs) /*pure*/ {
-    return Value(lhs < rhs);
+    return Value(forceValue(lhs) < forceValue(rhs));
 }
+
 private Value toString(in Value arg) /*pure*/ {
     return Value(coerceToString(arg, true), null);
 }
@@ -132,7 +133,48 @@ private Value map(Value fun, Value list) {
 }
 
 private Value tail(Value list) {
-    return Value(forceValue(list).list[1..$]);
+    return Value(forceValue(forceValue(list)).list[1..$]);
+}
+
+private Value dirOf(Value file) {
+    import std.path : dirName;
+    const dir = dirName(coerceToString(file));
+    return file.type == Type.Path ? Value(dir) : Value(dir, null);
+}
+
+private Value catAttrs(Value v, Value listOfAttrs) {
+    Value[] list;
+    const attrName = forceValue(v).str;
+    foreach (e; forceValue(listOfAttrs).list) {
+        const attr = attrName in forceValue(e).attrs;
+        if (attr) list ~= *attr;
+    }
+    return Value(list);
+}
+
+private Value length_(Value list) {
+    return Value(forceValue(forceValue(list)).list.length);
+}
+
+private Value genericClosure(Value attr) {
+    const attrs = forceValue(attr).attrs;
+    auto startSet = forceValue(attrs["startSet"]).list;
+    const operator = forceValue(attrs["operator"]);
+    bool[Value] done;
+    Value[] res;
+    while (startSet.length) {
+        const e = forceValue(startSet[0]);
+        startSet = startSet[1..$];
+        const key = forceValue(e.attrs["key"]);
+        debug writeln("key=",key);
+        if (key in done) continue;
+        done[key] = true;
+        assert(key in done);
+        res ~= e;
+        auto result = callFunction(operator, e, Loc());
+        startSet ~= forceValue(result).list;
+    }
+    return Value(res);
 }
 
 const Env staticBaseEnv;
@@ -151,13 +193,13 @@ static this() {
         "__attrNames" : wrap!attrNames(), "__attrValues" : wrap!attrValues(),
         "baseNameOf" : Value(&notImplemented), "__bitAnd" :  wrap!(binOp!"&")(),
         "__bitOr" :  wrap!(binOp!"|")(), "__bitXor" :  wrap!(binOp!"^")(),
-        "__catAttrs" : Value(&notImplemented), "__compareVersions" : Value(&notImplemented),
+        "__catAttrs" : wrap!catAttrs(), "__compareVersions" : Value(&notImplemented),
         "__concatLists" : Value(&notImplemented), "__concatMap" : Value(&notImplemented),
         "__concatStringsSep" : Value(&notImplemented), "__currentSystem" : Value("x86_64-darwin", null),
         "__currentTime" : Value(time(null)), "__deepSeq" : Value(&notImplemented),
         "derivation" : Value(&notImplemented), //lambda
         "derivationStrict" : Value(&notImplemented),
-        "dirOf" : Value(&notImplemented), "__div" : wrap!(binOp!"/")(),
+        "dirOf" : wrap!dirOf(), "__div" : wrap!(binOp!"/")(),
         "__elem" : Value(&notImplemented), "__elemAt" : wrap!elemAt(),
         "false" : Value(false), "fetchGit" : Value(&notImplemented),
         "fetchMercurial" : Value(&notImplemented), "fetchTarball" : Value(&notImplemented),
@@ -165,7 +207,7 @@ static this() {
         "__filterSource" : Value(&notImplemented), "__findFile" : Value(&notImplemented),
         "__foldl'" : wrap!foldl_(), "__fromJSON" : Value(&notImplemented),
         "fromTOML" : Value(&notImplemented), "__functionArgs" : Value(&notImplemented),
-        "__genList" : wrap!genList(), "__genericClosure" : Value(&notImplemented),
+        "__genList" : wrap!genList(), "__genericClosure" : wrap!genericClosure(),
         "__getAttr" : wrap!getAttr(), "__getContext" : Value(&notImplemented),
         "__getEnv" : Value(&notImplemented), "__hasAttr" : wrap!hasAttr(),
         "__hasContext" : Value(&notImplemented), "__hashFile" : Value(&notImplemented),
@@ -177,7 +219,7 @@ static this() {
         "__isFunction" : Value(&notImplemented), "__isInt" : Value(&notImplemented),
         "__isList" : Value(&notImplemented), "isNull" : wrap!isNull(),
         "__isPath" : Value(&notImplemented), "__isString" : Value(&notImplemented),
-        "__langVersion" : Value(5), "__length" : Value(&notImplemented),
+        "__langVersion" : Value(5), "__length" : wrap!length_(),
         "__lessThan" : wrap!lessThan(), "__listToAttrs" : Value(&notImplemented),
         "map" : wrap!map(), "__mapAttrs" : Value(&notImplemented),
         "__match" : Value(&notImplemented), "__mul" : wrap!(binOp!"*")(),
