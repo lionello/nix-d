@@ -22,18 +22,20 @@ void main(string[] args) {
         print(ast);
         write("=");
         auto value = eval(ast);
-        value = value.forceValueDeep;
+        value.forceValueDeep();
         if (value.type == Type.Lambda) {
-            // FIXME: read from .flags file
+            // FIXME: read args from .flags file
             auto lib = eval(parse("import(./lib.nix)"));
-            Bindings b = ["lib": lib, "xyzzy": Value("xyzzy!", null)];
-            value = callFunction(value, Value(b), Loc()).forceValueDeep;
-            value = value.attrs["result"];
+            auto b = Value(["lib": &lib, "xyzzy": Value("xyzzy!", null).dup]);
+            value = callFunction(value, b, Loc());
+            value.forceValueDeep();
+            value = *value.attrs["result"];
         }
+        writeln(value.toString(10));
         // Compare with exp
         const exp = readText(filename.replace(".nix", ".exp")).strip();
-        const value2 = eval(parse(exp)).forceValueDeep;
-        writeln(value);
+        auto value2 = eval(parse(exp));
+        value2.forceValueDeep();
         writeln(value2);
         assert(value == value2);
         writeln("Done.");

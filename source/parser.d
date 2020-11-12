@@ -26,169 +26,207 @@ struct AttrName {
 
 alias AttrPath = AttrName[];
 
-interface Visitor {
-    void visit(in ExprNop);
-    void visit(in ExprOpNot);
-    void visit(in ExprBinaryOp);
-    void visit(in ExprInt);
-    void visit(in ExprFloat);
-    void visit(in ExprString);
-    void visit(in ExprPath);
-    void visit(in ExprVar);
-    void visit(in ExprSelect);
-    void visit(in ExprOpHasAttr);
-    void visit(in ExprAttrs);
-    void visit(in ExprList);
-    void visit(in ExprLambda);
-    void visit(in ExprLet);
-    void visit(in ExprWith);
-    void visit(in ExprIf);
-    void visit(in ExprAssert);
+interface Visitor {}
+interface ConstVisitor : Visitor {}
+
+template VisitorT(T...) {
+    static if (T.length > 1) {
+    interface VisitorT : VisitorT!(T[0]), VisitorT!(T[1..$]) {}
+    } else {
+    interface VisitorT : Visitor {
+        void visit(T[0]);
+    }
+    }
 }
 
-abstract class Expr {
-    Loc loc; // TODO
-    abstract void accept(Visitor v) const;
+interface Visitors : VisitorT!(ExprNop, ExprOpNot, ExprBinaryOp, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar,
+                               ExprSelect, ExprOpHasAttr, ExprAttrs, ExprList, ExprLambda, ExprLet, ExprWith, ExprIf,
+                               ExprAssert) {
+}
+
+template ConstVisitorT(T...) {
+    static if (T.length > 1) {
+    interface ConstVisitorT : ConstVisitorT!(T[0]), ConstVisitorT!(T[1..$]) {}
+    } else {
+    interface ConstVisitorT : VisitorT!(const T[0]), ConstVisitor {}
+    }
+}
+
+interface ConstVisitors : ConstVisitorT!(ExprNop, ExprOpNot, ExprBinaryOp, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar,
+                               ExprSelect, ExprOpHasAttr, ExprAttrs, ExprList, ExprLambda, ExprLet, ExprWith, ExprIf,
+                               ExprAssert) {
+}
+
+template Accept() {
+    override void accept(Visitor v) {
+        auto visitorT = cast(VisitorT!(typeof(this))) v;
+        return visitorT ? visitorT.visit(this) : super.accept(v);
+    }
+    override void accept(Visitor v) const {
+        auto visitorT = cast(VisitorT!(typeof(this))) v;
+        return visitorT ? visitorT.visit(this) : super.accept(v);
+    }
+}
+
+abstract class Visitable {
+    void accept(Visitor v) { const t = this; t.accept(v); }
+    void accept(Visitor) const { assert(0, "No visit method found for "~this.classinfo.name); }
+}
+
+abstract class Expr : Visitable {
+    Loc loc;
+
+    this(Loc loc) pure nothrow {
+        this.loc = loc;
+    }
+
+    mixin Accept;
 }
 
 class ExprNop : Expr {
     Expr expr;
-    this(Expr expr) pure nothrow {
+    this(Loc loc, Expr expr) pure nothrow {
         assert(expr);
+        super(loc);
         this.expr = expr;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprOpNot : Expr {
     Expr expr;
-    this(Expr expr) pure nothrow {
+    this(Loc loc, Expr expr) pure nothrow {
         assert(expr);
+        super(loc);
         this.expr = expr;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 abstract class BinaryExpr : Expr {
     Expr left;
+    this(Loc loc) pure nothrow {
+        super(loc);
+    }
     @property abstract Tok operator() nothrow const pure;
 }
 
 class ExprBinaryOp : BinaryExpr {
     Tok op;
     Expr right;
-    this(Tok op, Expr left, Expr right) pure nothrow {
+    this(Loc loc, Tok op, Expr left, Expr right) pure nothrow {
         assert(left);
         assert(right);
+        super(loc);
         this.op = op;
         this.left = left;
         this.right = right;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
     override Tok operator() nothrow const pure { return op; }
 }
 
 class ExprSelect : BinaryExpr {
     AttrPath ap;
     Expr def;
-    this(Expr left, AttrPath ap, Expr def = null) pure nothrow {
+    this(Loc loc, Expr left, AttrPath ap, Expr def = null) pure nothrow {
         assert(left);
         assert(ap);
+        super(loc);
         this.left = left;
         this.ap = ap;
         this.def = def;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
     override Tok operator() nothrow const pure { return Tok.SELECT; }
 }
 
 class ExprOpHasAttr : BinaryExpr {
     AttrPath ap;
-    this(Expr left, AttrPath ap) pure nothrow {
+    this(Loc loc, Expr left, AttrPath ap) pure nothrow {
         assert(left);
         assert(ap);
+        super(loc);
         this.left = left;
         this.ap = ap;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
     override Tok operator() nothrow const pure { return Tok.HAS_ATTR; }
 }
 
 abstract class ValueExpr : Expr {
+    this(Loc loc) pure nothrow {
+        super(loc);
+    }
 }
 
 class ExprInt : ValueExpr {
     NixInt n;
-    this(NixInt n) pure nothrow {
+    this(Loc loc, NixInt n) pure nothrow {
+        super(loc);
         this.n = n;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprFloat : ValueExpr {
     NixFloat f;
-    this(NixFloat f) pure nothrow {
+    this(Loc loc, NixFloat f) pure nothrow {
+        super(loc);
         this.f = f;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprString : ValueExpr {
     string s;
     //context c;
-    this(string s) pure nothrow {
+    this(Loc loc, string s) pure nothrow {
+        super(loc);
         this.s = s;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprPath : ValueExpr {
     string p;
-    this(string p) pure nothrow {
+    this(Loc loc, string p) pure nothrow {
+        super(loc);
         this.p = p;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprVar : Expr {
     Ident name;
     // int level;
     //uint displ; // displacement
-    this(Ident name) pure nothrow {
+    this(Loc loc, Ident name) pure nothrow {
         assert(name);
+        super(loc);
         this.name = name;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprAttrs : Expr {
@@ -206,20 +244,23 @@ class ExprAttrs : Expr {
     }
     DynamicAttrDef[] dynamicAttrs;
     bool recursive;
-    override void accept(Visitor v) const {
-        v.visit(this);
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
+
+    this(Loc loc) pure nothrow {
+        super(loc);
     }
 }
 
 class ExprList : Expr {
     Expr[] elems;
-    this(Expr[] elems) pure nothrow {
+    this(Loc loc, Expr[] elems) pure nothrow {
+        super(loc);
         this.elems = elems;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 struct Formal {
@@ -237,8 +278,9 @@ class ExprLambda : Expr {
     Ident arg;
     Formals formals;
     Expr body;
-    this(Expr body, Ident arg, Formals formals) pure nothrow {
+    this(Loc loc, Expr body, Ident arg, Formals formals) pure nothrow {
         assert(body);
+        super(loc);
         this.arg = arg;
         this.formals = formals;
         this.body = body;
@@ -247,77 +289,77 @@ class ExprLambda : Expr {
     @property
     bool matchAttrs() pure { return formals !is null; }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprLet : Expr {
     ExprAttrs attrs;
     Expr body;
-    this(ExprAttrs attrs, Expr body) pure nothrow {
+    this(Loc loc, ExprAttrs attrs, Expr body) pure nothrow {
         assert(attrs);
         assert(body);
+        super(loc);
         this.attrs = attrs;
         this.body = body;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprWith : Expr {
     Expr attrs, body;
     // uint prevWith;
-    this(Expr attrs, Expr body) pure nothrow {
+    this(Loc loc, Expr attrs, Expr body) pure nothrow {
         assert(attrs);
         assert(body);
+        super(loc);
         this.attrs = attrs;
         this.body = body;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprIf : Expr {
     Expr cond, then, else_;
-    this(Expr cond, Expr then, Expr else_) pure nothrow {
+    this(Loc loc, Expr cond, Expr then, Expr else_) pure nothrow {
         assert(cond);
         assert(then);
         assert(else_);
+        super(loc);
         this.cond = cond;
         this.then = then;
         this.else_ = else_;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 class ExprAssert : Expr {
     Expr cond, body;
-    this(Expr cond, Expr body) pure nothrow {
+    this(Loc loc, Expr cond, Expr body) pure nothrow {
         assert(cond);
         assert(body);
+        super(loc);
         this.cond = cond;
         this.body = body;
     }
 
-    override void accept(Visitor v) const {
-        v.visit(this);
-    }
+    //override void accept(Visitor v) { v.visit(this); }
+    mixin Accept;
 }
 
 private ExprList parseList(R)(ref R input) pure if (isTokenRange!R) {
     Expr[] elems;
+    const loc = input.front.loc;
     while (input.front.tok != Tok.RIGHT_BRACKET) {
         elems ~= parseSelect(input);
     }
-    return new ExprList(elems);
+    return new ExprList(loc, elems);
 }
 
 private AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
@@ -332,7 +374,8 @@ private AttrPath parseAttrs(R)(ref R input) pure if (isTokenRange!R) {
 }
 
 private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
-    auto binds = new ExprAttrs();
+    if (input.empty) return null;
+    auto binds = new ExprAttrs(input.front.loc);
     while (!input.empty) {
         switch (input.front.tok) {
         case Tok.INHERIT:
@@ -342,18 +385,21 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 auto expr = parseExpression(input);
                 assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
                 input.popFront(); // eat the )
+                const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
                     assert(ap.ident);
                     assert(ap.ident !in binds.attrs);
-                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprSelect(expr, [
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprSelect(loc,
+                            expr, [
                                 ap
                             ]), true);
                 }
             } else {
+                const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
                     assert(ap.ident);
                     assert(ap.ident !in binds.attrs);
-                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprVar(ap.ident), true);
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprVar(loc, ap.ident), true);
                 }
             }
             break;
@@ -415,7 +461,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
         input.popFront(); // eat the }
         binds.recursive = true;
-        return new ExprSelect(binds, [AttrName("body")]);
+        return new ExprSelect(t.loc, binds, [AttrName("body")]);
     case Tok.REC:
         input.popFront(); // eat the rec
         assert(input.front.tok == Tok.LEFT_CURLY, input.front.s);
@@ -437,7 +483,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         return binds;
     case Tok.IDENTIFIER:
         input.popFront();
-        return new ExprVar(t.s);
+        return new ExprVar(t.loc, t.s);
     case Tok.LEFT_BRACKET:
         input.popFront(); // eat the [
         auto e = parseList(input);
@@ -452,26 +498,26 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
         input.popFront(); // eat the )
         // Wrap the resulting expression in a NOP to avoid assoc reshuffling
-        return new ExprNop(e);
+        return new ExprNop(t.loc, e);
     case Tok.INT:
         input.popFront();
-        return new ExprInt(to!NixInt(t.s));
+        return new ExprInt(t.loc, to!NixInt(t.s));
     case Tok.FLOAT:
         input.popFront();
-        return new ExprFloat(to!NixFloat(t.s));
+        return new ExprFloat(t.loc, to!NixFloat(t.s));
     case Tok.URI: // deprecated!
         input.popFront();
-        return new ExprString(t.s);
+        return new ExprString(t.loc, t.s);
     case Tok.PATH:
     case Tok.HPATH:
         input.popFront();
         // Cannot convert paths to absolute here because parsing is pure
-        return new ExprPath(t.s);
+        return new ExprPath(t.loc, t.s);
     case Tok.SPATH:
         input.popFront();
         // TODO: consider creating a ExprSPath AST node instead of rewriting during parsing
-        auto findNixPath = new ExprBinaryOp(Tok.APP, new ExprVar("__findFile"), new ExprVar("__nixPath"));
-        return new ExprBinaryOp(Tok.APP, findNixPath, new ExprString(t.s));
+        auto findNixPath = new ExprBinaryOp(t.loc, Tok.APP, new ExprVar(t.loc, "__findFile"), new ExprVar(t.loc, "__nixPath"));
+        return new ExprBinaryOp(t.loc, Tok.APP, findNixPath, new ExprString(t.loc, t.s));
     case Tok.STRING_OPEN:
         return parseStr(input);
     case Tok.STRING:
@@ -520,17 +566,18 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
     while (true) {
         switch(input.front.tok) {
         case Tok.STR:
-            es ~= new ExprString(input.front.s);
+            es ~= new ExprString(input.front.loc, input.front.s);
             input.popFront(); // eat the str
             break;
         case Tok.IND_STRING_CLOSE:
         case Tok.STRING_CLOSE:
+            const loc = input.front.loc;
             input.popFront(); // eat the " or ''
             if (es.length == 1 && cast(ExprString)es[0]) return es[0];
-            // Always start with an empty string to force coercion
-            Expr concat = new ExprString("");
+            // Always start with an empty string to force string coercion
+            Expr concat = new ExprString(loc, "");
             foreach (e; es[0..$]) {
-                concat = new ExprBinaryOp(Tok.ADD, concat, e);
+                concat = new ExprBinaryOp(e.loc, Tok.ADD, concat, e);
             }
             return concat;
         case Tok.DOLLAR_CURLY:
@@ -638,13 +685,13 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(body, t.s, formals);
+            return new ExprLambda(t.loc, body, t.s, formals);
         case Tok.COLON:
             input.popFront(); // eat the id
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(body, t.s, null);
+            return new ExprLambda(t.loc, body, t.s, null);
         default:
             break;
         }
@@ -669,13 +716,13 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(body, id, formals);
+            return new ExprLambda(t.loc, body, id, formals);
         case Tok.COLON:
             input = f; // fast forward
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
-            return new ExprLambda(body, null, formals);
+            return new ExprLambda(t.loc, body, null, formals);
         default:
             // assert(0, input.front.s);
             break;
@@ -687,14 +734,14 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         assert(expr, input.front.s);
         assert(input.front.tok == Tok.SEMICOLON, input.front.s);
         input.popFront(); // eat the ;
-        return new ExprAssert(expr, parseExpression(input));
+        return new ExprAssert(t.loc, expr, parseExpression(input));
     case Tok.WITH:
         input.popFront(); // eat the with
         auto expr = parseExpression(input);
         assert(expr, input.front.s);
         assert(input.front.tok == Tok.SEMICOLON, input.front.s);
         input.popFront(); // eat the ;
-        return new ExprWith(expr, parseExpression(input));
+        return new ExprWith(t.loc, expr, parseExpression(input));
     case Tok.LET:
         auto let = input.save();
         let.popFront(); // eat the let
@@ -706,7 +753,7 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         assert(0 == binds.dynamicAttrs.length); // dynamic attributes not allowed here
         assert(input.front.tok == Tok.IN, input.front.s);
         input.popFront(); // eat the in
-        return new ExprLet(binds, parseExpression(input));
+        return new ExprLet(t.loc, binds, parseExpression(input));
     default:
         return parseIf(input);
     }
@@ -714,6 +761,7 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
 
 private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
     debug(PARSER) scope(exit) writeln("parseIf <- ");
+    const loc = input.front.loc;
     switch (input.front.tok) {
     case Tok.IF:
         input.popFront(); // eat the if
@@ -727,7 +775,7 @@ private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront(); // eat the else
         auto else_ = parseExpression(input);
         assert(else_, input.front.s);
-        return new ExprIf(cond, then, else_);
+        return new ExprIf(loc, cond, then, else_);
     default:
         return parseOp(input);
     }
@@ -738,26 +786,29 @@ private Expr parseOneOp(R)(ref R input) pure if (isTokenRange!R) {
     debug(PARSER) scope(exit) writeln("parseOneOp <- ");
     switch (input.front.tok) {
     case Tok.NOT:
+        const loc = input.front.loc;
         input.popFront(); // eat the !
         auto expr = parseOneOp(input);
         debug(PARSER) writeln("parseOneOp: parseOneOp returned ", format(expr));
-        return new ExprOpNot(expr);
+        return new ExprOpNot(loc, expr);
     case Tok.NEGATE:
+        const loc = input.front.loc;
         input.popFront(); // eat the -
         auto expr = parseOneOp(input);
         debug(PARSER) writeln("parseOneOp: parseOneOp returned ", format(expr));
-        return new ExprBinaryOp(Tok.NEGATE, new ExprInt(0), expr);
+        return new ExprBinaryOp(loc, Tok.NEGATE, new ExprInt(loc, 0), expr);
     default:
         auto left = parseApp(input);
         debug(PARSER) writeln("parseOneOp: parseApp returned ", format(left));
         if (!left || input.empty)
             return left;
         if (input.front.tok == Tok.HAS_ATTR) {
+            const loc = input.front.loc;
             input.popFront(); // eat the ?
             auto ap = parseAttrPath(input);
             assert(ap, input.front.s);
             assert(input.front.tok != Tok.HAS_ATTR, "TODO handle this");
-            return new ExprOpHasAttr(left, ap);
+            return new ExprOpHasAttr(loc, left, ap);
         }
         return left;
     }
@@ -806,12 +857,13 @@ L_next:
     case Tok.AND:
     case Tok.OR:
     case Tok.IMPL:
+        const loc = input.front.loc;
         input.popFront(); // eat the op
         auto right = parseOneOp(input);
         if (!right)
             return left;
         if (input.empty)
-            return new ExprBinaryOp(op, left, right);
+            return new ExprBinaryOp(loc, op, left, right);
         auto op2 = input.front.tok;
         switch (op2) {
         case Tok.NEGATE:
@@ -836,15 +888,16 @@ L_next:
             const assoc = associativity(op, op2);
             assert(assoc != Associativity.NONE, "Non-associative");
             if (assoc == Associativity.LEFT) {
-                left = new ExprBinaryOp(op, left, right);
+                left = new ExprBinaryOp(loc, op, left, right);
                 goto L_next;
             } else {
+                const loc2 = input.front.loc;
                 input.popFront(); // eat the op2
-                left = new ExprBinaryOp(op, left, new ExprBinaryOp(op2, right, parseOneOp(input)));
+                left = new ExprBinaryOp(loc, op, left, new ExprBinaryOp(loc2, op2, right, parseOneOp(input)));
                 goto L_next;
             }
         default:
-            return new ExprBinaryOp(op, left, right);
+            return new ExprBinaryOp(loc, op, left, right);
         }
     default:
         return left;
@@ -895,11 +948,12 @@ private Expr parseApp(R)(ref R input) pure if (isTokenRange!R) {
     if (!select)
         return null;
     while (true) {
+        const loc = input.front.loc;
         auto arg = parseSelect(input);
         if (!arg)
             break;
         debug(PARSER) writeln("parseApp: parseSelect returned ", format(arg));
-        select = new ExprBinaryOp(Tok.APP, select, arg);
+        select = new ExprBinaryOp(loc, Tok.APP, select, arg);
     }
     return select;
 }
@@ -918,6 +972,7 @@ unittest {
 
 private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
     auto arg = parseSimple(input);
+    const loc = input.front.loc;
     switch (input.front.tok) {
     case Tok.SELECT:
         assert(arg);
@@ -926,16 +981,16 @@ private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
         if (input.front.tok == Tok.OR_KW) {
             input.popFront(); // eat the or
             auto def = parseSelect(input);
-            return new ExprSelect(arg, attrpath, def);
+            return new ExprSelect(loc, arg, attrpath, def);
         } else {
-            return new ExprSelect(arg, attrpath);
+            return new ExprSelect(loc, arg, attrpath);
         }
     case Tok.OR_KW:
         assert(arg);
         input.popFront(); // eat the or
         /* Backwards compatibility: because Nixpkgs has a rarely used
             function named ‘or’, allow stuff like ‘map or [...]’. */
-        return new ExprBinaryOp(Tok.APP, arg, new ExprVar("or"));
+        return new ExprBinaryOp(loc, Tok.APP, arg, new ExprVar(loc, "or"));
     default:
         return arg;
     }
@@ -993,12 +1048,12 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
                 attrs = cast(ExprAttrs) j.value;
                 assert(attrs);
             } else {
-                auto nested = new ExprAttrs();
+                auto nested = new ExprAttrs(e.loc);
                 attrs.attrs[i.ident] = ExprAttrs.AttrDef(nested);
                 attrs = nested;
             }
         } else {
-            auto nested = new ExprAttrs();
+            auto nested = new ExprAttrs(i.expr.loc);
             // debug writeln(__LINE__,format(i.expr));
             attrs.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(i.expr, nested);
             attrs = nested;

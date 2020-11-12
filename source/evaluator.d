@@ -5,57 +5,48 @@ import nix.primops;
 
 debug import std.stdio : writeln;
 
-Value maybeThunk(in Expr e, in Env* env) /*pure*/ {
+ref Value maybeThunk(in Expr e, Env* env) /*pure*/ {
     // debug writeln(__LINE__, env.vars);
     auto thunker = new Thunker(env);
     e.accept(thunker);
-    return thunker.value;
+    return *thunker.value;
 }
 
-private Value callPrimOp(Value fun, Value arg, in Loc pos) /*pure*/ {
-    // Value p = fun;
-    // while (p.type != Type.PrimOp) {
-    //     p = p.app[0];
-    // }
-    return fun.primOp()(fun.primOpArgs ~ arg);
-}
-
-Value callFunction(Value fun, Value arg, in Loc pos) /*pure*/ {
+Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
     // debug writeln("callFunction ", fun, arg);
     auto f = forceValue(fun, pos);
     switch(f.type) {
     case Type.PrimOp:
         assert(0);
     case Type.PrimOpApp:
-        return callPrimOp(f, arg, pos);
+        return f.primOp()(f.primOpArgs ~ &arg);
     case Type.Attrs:
-        const functor = f.attrs["__functor"];
-        const v2 = callFunction(functor, f, pos);
+        auto functor = f.attrs["__functor"];
+        auto v2 = callFunction(*functor, f, pos);
         return callFunction(v2, arg, pos);
     case Type.Lambda:
-        Bindings b = empty;
-        auto env2 = new Env(f.env, b);
+        auto env2 = new Env(f.env);
         if (!f.lambda.formals) {
             // add f.lambda.arg to the new env
-            b[f.lambda.arg] = arg;
+            env2.vars[f.lambda.arg] = arg.dup;
         } else {
-            const attrs = forceValue(arg, pos).attrs;
+            auto attrs = forceValue(arg, pos).attrs;
             // For each formal argument, get the actual argument.  If
             // there is no matching actual argument but the formal
             // argument has a default, use the default.
             int attrsUsed;
             foreach (formal; f.lambda.formals.elems) {
-                const j = formal.name in attrs;
+                auto j = formal.name in attrs;
                 if (!j) {
                     assert(formal.def, "Lambda called without required argument "~formal.name);
-                    b[formal.name] = maybeThunk(formal.def, env2);
+                    env2.vars[formal.name] = maybeThunk(formal.def, env2).dup;
                 } else {
                     attrsUsed++;
-                    b[formal.name] = *j;
+                    env2.vars[formal.name] = *j;
                 }
             }
             if (!f.lambda.formals.ellipsis && attrsUsed != attrs.length) {
-                foreach (const k, v; attrs)
+                foreach (const k, ref v; attrs)
                     assert(0, "Lambda called with unexpected argument "~k);
                 assert(0);
             }
@@ -66,43 +57,57 @@ Value callFunction(Value fun, Value arg, in Loc pos) /*pure*/ {
     }
 }
 
-Value forceValueDeep(Value v) {
-    // debug writeln("forceValueDeep ", v);
-    switch (v.type) {
+ref Value forceValueDeep(ref Value value) {
+    // debug writeln("forceValueDeep ", value);
+    forceValue(value);
+    switch (value.type) {
     case Type.Attrs:
         // TODO: detect infinite recursion
-        Bindings b;
-        foreach (k, e; v.attrs) {
-            // TODO: minimize memory allocation by using COW
-            b[k] = forceValueDeep(e);
+        foreach (v; value.attrs) {
+            forceValueDeep(*v);
         }
-        return Value(b);
+        break;
     case Type.List:
-        Value[] l;
-        foreach (ref e; v.list) {
-            // TODO: minimize memory allocation by using COW
-            l ~= forceValueDeep(e);
+        foreach (v; value.list) {
+            forceValueDeep(*v);
         }
-        return Value(l);
+        break;
+    // case Type.Ref:
+    //     value = forceValueDeep(value.deref);
+    //     break;
     default:
-        return forceValue(v);
+        break;
     }
+    return value;
 }
 
-Value forceValue(Value v, in Loc pos = Loc()) {
-    // debug writeln("forceValue ", v);
-    switch (v.type) {
+ref Value forceValue(ref Value value, in Loc pos = Loc()) {
+    // debug writeln("forceValue ", value);
+    switch (value.type) {
+    // case Type.Ref:
+    //     value = forceValue(value.deref);
+    //     break;
     case Type.Thunk:
-        return eval(v.thunk, *v.env);
+        auto thunk = value.thunk;
+        auto env = value.env;
+        value = Value(double.nan); // avoid infinite recursion
+        // scope (failure)
+        value = eval(thunk, *env);
+        break;
     case Type.PrimOp:
-        return v.primOp()();
+        value = value.primOp()();
+        assert(value.type != Type.Thunk);
+        break;
     case Type.App:
-        return callFunction(v.app[0], v.app[1], pos);
+        value = callFunction(*value.app[0], *value.app[1], pos);
+        assert(value.type != Type.Thunk);
+        break;
     // case Type.Blackhole:
         // assert(0, "infinite recursion encountered");
     default:
-        return v;
+        break;
     }
+    return value;
 }
 
 unittest {
@@ -114,8 +119,8 @@ unittest {
     assert(5 == eval(new ExprBinaryOp(Tok.APP, new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2)), new ExprInt(3))).integer);
 }
 
-string coerceToString(Value v, bool coerceMore = false) /*pure*/ {
-    auto value = forceValue(v);
+string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
+    forceValue(value);
     switch (value.type) {
     case Type.String:
         return value.str;
@@ -125,12 +130,13 @@ string coerceToString(Value v, bool coerceMore = false) /*pure*/ {
     case Type.Attrs:
         auto toString = "__toString" in value.attrs;
         if (toString) {
-            auto s = coerceToString(callFunction(*toString, v, Loc()), coerceMore);
+            auto str = callFunction(**toString, value, Loc());
+            auto s = coerceToString(str, coerceMore);
             if (s) return s;
         }
         auto i = "outPath" in value.attrs;
         assert(i, "cannot coerce a set to a string");
-        return coerceToString(*i, coerceMore);
+        return coerceToString(**i, coerceMore);
     // case Type.External: todo
     default:
         break;
@@ -143,9 +149,9 @@ string coerceToString(Value v, bool coerceMore = false) /*pure*/ {
             return "";
         case Type.List:
             string result;
-            foreach(i, elem; value.list) {
+            foreach(i, ref v; value.list) {
                 if (i) result ~= ' ';
-                result ~= coerceToString(elem, coerceMore);
+                result ~= coerceToString(value, coerceMore);
             }
             return result;
         case Type.Int:
@@ -159,10 +165,11 @@ string coerceToString(Value v, bool coerceMore = false) /*pure*/ {
 }
 
 unittest {
-    assert("" == coerceToString(Value(), true));
+    auto nil = Value();
+    assert("" == coerceToString(nil, true));
 }
 
-string coerceToPath(Value v) {
+string coerceToPath(ref Value v) {
     const path = coerceToString(v, false);
     if (path == "" || path[0] != '/') throw new Error("string "~path~" doesn't represent an absolute path");
     return path;
@@ -173,113 +180,80 @@ private string canonicalPath(string p) @safe {
     return asNormalizedPath(absolutePath(expandTilde(p))).array;
 }
 
-private class Thunker : Visitor {
-    const(Env) *env;
-    Value value;
+private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
+    Env *env;
+    Value *value;
 
-    this(in Env* env) {
+    this(Env* env) {
         assert(env);
         this.env = env;
     }
 
-    const(Value*) lookupVar(string name) {
+    Value* lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
-                return v;
+                return *v;
         }
         return null;
     }
 
-
     private void mkThunk(in Expr e) {
-        value = Value(e, env);
+        value = new Value(e, env);
+    }
+
+    void visit(in Expr e) {
+        mkThunk(e);
     }
 
     void visit(in ExprNop e) {
         e.expr.accept(this);
     }
 
-    void visit(in ExprOpNot e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprBinaryOp e) {
-        mkThunk(e);
-    }
-
     void visit(in ExprInt e) {
-        value = Value(e.n);
+        value = new Value(e.n);
     }
 
     void visit(in ExprFloat e) {
-        value = Value(e.f);
+        value = new Value(e.f);
     }
 
     void visit(in ExprString e) {
-        value = Value(e.s, null);
+        value = new Value(e.s, null);
     }
 
     void visit(in ExprPath e) {
-        value = Value(canonicalPath(e.p));
+        value = new Value(canonicalPath(e.p));
     }
 
     void visit(in ExprVar e) {
-        const v = lookupVar(e.name);
+        auto v = lookupVar(e.name);
         // The value might not be initialised in the environment yet.
         if (v) {
-            value = *v;
+            value = v;
         } else {
             mkThunk(e);
         }
     }
-
-    void visit(in ExprSelect e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprOpHasAttr e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprAttrs e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprList e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprLambda e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprLet e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprWith e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprIf e) {
-        mkThunk(e);
-    }
-
-    void visit(in ExprAssert e) {
-        mkThunk(e);
-    }
 }
 
-private bool eqValues(Value lhs, Value rhs) {
+unittest {
+    auto thunker = new Thunker(new Env);
+    new ExprInt(42).accept(thunker);
+    assert(thunker.value.integer == 42);
+    new ExprList([new ExprInt(42)]).accept(thunker);
+    assert(thunker.value.thunk);
+}
+
+private bool eqValues(ref Value lhs, ref Value rhs) {
     auto l = forceValue(lhs);
     auto r = forceValue(rhs);
 
     if (l.type == Type.List && r.type == Type.List) {
         if (l.list.length != r.list.length) return false;
-        foreach (i, ref v; l.list) {
-            if (!eqValues(v, r.list[i])) return false;
+        foreach (i, v; l.list) {
+            if (!eqValues(*v, *r.list[i])) return false;
         }
         return true;
     // } else if (l.type == Type.Attrs && r.type == Type.Attrs) {
@@ -290,175 +264,207 @@ private bool eqValues(Value lhs, Value rhs) {
     }
 }
 
-class Evaluator : Visitor {
-    const(Env)* env;
-    Value value;
+class Evaluator : ConstVisitors {
+    Env* env;
+    Value *value;
 
-    this(in Env* env) /*pure*/ {
+    this(Env* env) /*pure*/ {
         assert(env);
         this.env = env;
     }
 
-    private Value visit(in Expr e) {
-        if (e)
-            e.accept(this);
-        return value;
+    private ref Value visit(in Expr expr) {
+        assert(expr);//test
+        if (expr)
+            expr.accept(this);
+        return *value;
     }
 
-    void visit(in ExprNop e) {
-        visit(e.expr);
+    void visit(in ExprNop expr) {
+        visit(expr.expr);
     }
 
-    void visit(in ExprOpNot e) {
-        visit(e.expr);
-        value = Value(!value.boolean);
+    void visit(in ExprOpNot expr) {
+        value = new Value(!visit(expr.expr).boolean);
     }
 
-    void visit(in ExprBinaryOp e) {
-        switch (e.op) {
+    void visit(in ExprBinaryOp expr) {
+        switch (expr.op) {
         case Tok.AND:
-            if (visit(e.left).boolean)
-                visit(e.right);
+            if (visit(expr.left).boolean)
+                visit(expr.right);
             assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.OR:
-            if (!visit(e.left).boolean)
-                visit(e.right);
+            if (!visit(expr.left).boolean)
+                visit(expr.right);
             assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.EQ:
-            value = Value(eqValues(visit(e.left), visit(e.right)));
+            auto lhs = visit(expr.left);
+            auto rhs = visit(expr.right);
+            value = new Value(eqValues(lhs, rhs));
             break;
         case Tok.NEQ:
-            value = Value(!eqValues(visit(e.left), visit(e.right)));
+            auto lhs = visit(expr.left);
+            auto rhs = visit(expr.right);
+            value = new Value(!eqValues(lhs, rhs));
             break;
         case Tok.CONCAT:
-            value = Value(forceValue(visit(e.left)).list ~ forceValue(visit(e.right)).list);
+            auto lhs = visit(expr.left);
+            auto rhs = visit(expr.right);
+            value = new Value(forceValue(lhs).list ~ forceValue(rhs).list);
             break;
         case Tok.MUL:
             auto __mul = lookupVar("__mul"); // can be overridden
-            value = callFunction(callFunction(__mul, visit(e.left), e.loc), visit(e.right), e.loc);
+            auto lhs = visit(expr.left);
+            auto partial = callFunction(__mul, lhs, expr.loc);
+            auto rhs = visit(expr.right);
+            value = callFunction(partial, rhs, expr.loc).dup;
             break;
         case Tok.DIV:
             auto __div = lookupVar("__div"); // can be overridden
-            value = callFunction(callFunction(__div, visit(e.left), e.loc), visit(e.right), e.loc);
+            auto lhs = visit(expr.left);
+            auto partial = callFunction(__div, lhs, expr.loc);
+            auto rhs = visit(expr.right);
+            value = callFunction(partial, rhs, expr.loc).dup;
             break;
         case Tok.ADD:
-            // Strangely enough, cannot be overridden
-            value = forceValue(visit(e.left)) + forceValue(visit(e.right));
+            // auto __add = lookupVar("__add"); // can be overridden
+            // Strangely enough, + operator cannot currently be overridden
+            auto lhs = visit(expr.left);
+            auto rhs = visit(expr.right);
+            value = (forceValue(lhs) + forceValue(rhs)).dup;
             break;
         case Tok.NEGATE:
         case Tok.SUB:
             auto __sub = lookupVar("__sub"); // can be overridden
-            value = callFunction(callFunction(__sub, visit(e.left), e.loc), visit(e.right), e.loc);
+            auto lhs = visit(expr.left);
+            auto partial = callFunction(__sub, lhs, expr.loc);
+            auto rhs = visit(expr.right);
+            value = callFunction(partial, rhs, expr.loc).dup;
             break;
         case Tok.UPDATE:
             Bindings b;
-            foreach (k, v; visit(e.left).attrs) {
+            foreach (k, v; visit(expr.left).attrs) {
                 b[k] = v;
             }
-            foreach (k, v; visit(e.right).attrs) {
+            foreach (k, v; visit(expr.right).attrs) {
                 b[k] = v;
             }
-            value = Value(b);
+            value = new Value(b);
             break;
         case Tok.LT:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
-            value = callFunction(callFunction(__lessThan, visit(e.left), e.loc), visit(e.right), e.loc);
+            auto lhs = visit(expr.left);
+            auto partial = callFunction(__lessThan, lhs, expr.loc);
+            auto rhs = visit(expr.right);
+            value = callFunction(partial, rhs, expr.loc).dup;
             break;
         case Tok.LEQ:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
-            const gt = callFunction(callFunction(__lessThan, visit(e.right), e.loc), visit(e.left), e.loc);
-            value = Value(!gt.boolean);
+            auto rhs = visit(expr.right);
+            auto partial = callFunction(__lessThan, rhs, expr.loc);
+            auto lhs = visit(expr.left);
+            const gt = callFunction(partial, lhs, expr.loc);
+            value = new Value(!gt.boolean);
             break;
         case Tok.GT:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
-            value = callFunction(callFunction(__lessThan, visit(e.right), e.loc), visit(e.left), e.loc);
+            auto rhs = visit(expr.right);
+            auto partial = callFunction(__lessThan, rhs, expr.loc);
+            auto lhs = visit(expr.left);
+            value = callFunction(partial, lhs, expr.loc).dup;
             break;
         case Tok.GEQ:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
-            const lt = callFunction(callFunction(__lessThan, visit(e.left), e.loc), visit(e.right), e.loc);
-            value = Value(!lt.boolean);
+            auto lhs = visit(expr.left);
+            auto partial = callFunction(__lessThan, lhs, expr.loc);
+            auto rhs = visit(expr.right);
+            const lt = callFunction(partial, rhs, expr.loc);
+            value = new Value(!lt.boolean);
             break;
         case Tok.IMPL:
-            if (visit(e.left).boolean)
-                visit(e.right);
+            if (visit(expr.left).boolean)
+                visit(expr.right);
             else
-                value = Value.TRUE;
+                value = new Value(true);
             assert(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.APP:
-            value = callFunction(visit(e.left), maybeThunk(e.right, env), e.loc);
+            auto lhs = visit(expr.left);
+            value = callFunction(lhs, maybeThunk(expr.right, env), expr.loc).dup;
             break;
         default:
             assert(0);
         }
     }
 
-    const(Value) lookupVar(string name) {
+    ref Value lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (!curEnv.vars) continue;
             // debug writeln("lookupVarx ", name, curEnv.vars);
             // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
-                return *v;
+                return **v;
         }
         throw new Error("undefined variable "~name);
     }
 
-    void visit(in ExprInt e) {
-        value = Value(e.n);
+    void visit(in ExprInt expr) {
+        value = new Value(expr.n);
     }
 
-    void visit(in ExprFloat e) {
-        value = Value(e.f);
+    void visit(in ExprFloat expr) {
+        value = new Value(expr.f);
     }
 
-    void visit(in ExprString e) {
-        value = Value(e.s, null);
+    void visit(in ExprString expr) {
+        value = new Value(expr.s, null);
     }
 
-    void visit(in ExprPath e) {
-        value = Value(canonicalPath(e.p));
+    void visit(in ExprPath expr) {
+        value = new Value(canonicalPath(expr.p));
     }
 
-    void visit(in ExprVar e) {
-        value = forceValue(lookupVar(e.name), e.loc);
+    void visit(in ExprVar expr) {
+        value = &forceValue(lookupVar(expr.name), expr.loc);
     }
 
-    string getName(in ref AttrName an) {
+    private string getName(in ref AttrName an) {
         if (an.ident) {
             return an.ident;
         } else {
-            visit(an.expr);
-            return forceValue(value).str;
+            return forceValue(visit(an.expr)).str;
         }
     }
 
-    void visit(in ExprSelect e) {
-        visit(e.left);
-        foreach (a; e.ap) {
-            value = forceValue(value);
+    void visit(in ExprSelect expr) {
+        visit(expr.left);
+        foreach (a; expr.ap) {
+            forceValue(*value, expr.loc);
+            const name = getName(a);
             if (value.type == Type.Attrs) {
-                const j = getName(a) in value.attrs;
+                auto j = name in value.attrs;
                 if (j) {
                     value = *j;
                     continue;
                 }
             }
-            if (e.def) {
-                visit(e.def);
+            if (expr.def) {
+                visit(expr.def);
                 break;
             }
-            throw new Error("attribute missing: " ~ a.ident);
+            throw new Error("attribute missing: " ~ name);
         }
+        forceValue(*value, Loc()); // TODO: use pos from attr 'j'
     }
 
-    void visit(in ExprOpHasAttr e) {
-        visit(e.left);
-        foreach (a; e.ap) {
-            value = forceValue(value, e.loc);
+    void visit(in ExprOpHasAttr expr) {
+        visit(expr.left);
+        foreach (a; expr.ap) {
+            forceValue(*value, expr.loc);
             if (value.type == Type.Attrs) {
                 auto j = getName(a) in value.attrs;
                 if (j) {
@@ -466,17 +472,17 @@ class Evaluator : Visitor {
                     continue;
                 }
             }
-            value = Value(false);
+            value = new Value(false);
             return;
         }
-        value = Value(true);
+        value = new Value(true);
     }
 
-    void visit(in ExprAttrs e) {
-        const(Env)* dynamicEnv = env;
+    void visit(in ExprAttrs expr) {
+        auto dynamicEnv = env;
         Bindings attrs = empty;
-        if (e.recursive) {
-            const hasOverrides = "__overrides" in e.attrs;
+        if (expr.recursive) {
+            const hasOverrides = "__overrides" in expr.attrs;
 
             // Create a new environment that contains the attributes in this `rec'.
             auto newEnv = new Env(env, attrs);
@@ -484,11 +490,11 @@ class Evaluator : Visitor {
             // The recursive attributes are evaluated in the new
             // environment, while the inherited attributes are evaluated
             // in the original environment.
-            foreach (k, v; e.attrs) {
+            foreach (k, ref v; expr.attrs) {
                 if (hasOverrides && !v.inherited) {
-                    attrs[k] = Value(v.value, newEnv);
+                    attrs[k] = new Value(v.value, newEnv);
                 } else {
-                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv);
+                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv).dup;
                 }
             }
             // debug writeln(__LINE__, newEnv.vars);
@@ -502,86 +508,88 @@ class Evaluator : Visitor {
             // been substituted into the bodies of the other attributes.
             // Hence we need __overrides.)
             if (hasOverrides) {
-                auto vOverrides = forceValue(attrs["__overrides"], e.loc).attrs;
-                foreach(k,v; vOverrides) {
-                    // auto j = k in e.attrs;
+                auto vOverrides = forceValue(*attrs["__overrides"], expr.loc).attrs;
+                foreach(k, ref v; vOverrides) {
+                    // auto j = k in expr.attrs;
                     attrs[k] = v; // overwrites
                 }
             }
             dynamicEnv = newEnv;
             // assert(dynamicEnv.vars is attrs);
         } else {
-            foreach (k, v; e.attrs) {
-                attrs[k] = maybeThunk(v.value, env);
+            foreach (k, attr; expr.attrs) {
+                attrs[k] = maybeThunk(attr.value, env).dup;
             }
         }
         // Dynamic attrs apply *after* rec and __overrides.
-        foreach (v; e.dynamicAttrs) {
-            visit(v.name);
-            const nameVal = forceValue(value, e.loc);
-            debug writeln("nameVal:",nameVal);
+        foreach (attr; expr.dynamicAttrs) {
+            auto nameVal = visit(attr.name);
+            forceValue(nameVal, expr.loc);
             if (nameVal.type == Type.Null) {
                 continue;
             }
             const nameSym = nameVal.str;
             assert(nameSym !in attrs, "dynamic attribute already defined");
-            debug writeln("nameSym:",nameSym);
-            attrs[nameSym] = maybeThunk(v.value, dynamicEnv);
+            attrs[nameSym] = maybeThunk(attr.value, dynamicEnv).dup;
         }
-        debug writeln(__LINE__, attrs);
-        value = Value(attrs);
+        value = new Value(attrs);
     }
 
-    void visit(in ExprList e) {
-        Value[] vars;
-        foreach (v; e.elems)
-            vars ~= maybeThunk(v, env);
-        value = Value(vars);
+    void visit(in ExprList expr) {
+        Value*[] vars;
+        foreach (e; expr.elems)
+            vars ~= maybeThunk(e, env).dup;
+        value = new Value(vars);
     }
 
-    void visit(in ExprLambda e) {
-        value = Value(e, env);
+    void visit(in ExprLambda expr) {
+        value = new Value(expr, env);
     }
 
-    void visit(in ExprLet e) {
-        Bindings b = empty;
+    void visit(in ExprLet expr) {
         // Create a new environment that contains the attributes in this `let'.
-        auto newEnv = new Env(env, b);
-        foreach (k, v; e.attrs.attrs) {
-            b[k] = maybeThunk(v.value, v.inherited ? env : newEnv);
+        auto newEnv = new Env(env);
+        foreach (k, attr; expr.attrs.attrs) {
+            newEnv.vars[k] = maybeThunk(attr.value, attr.inherited ? env : newEnv).dup;
         }
         env = newEnv;
-        visit(e.body);
+        visit(expr.body);
         env = newEnv.up;
     }
 
-    void visit(in ExprWith e) {
-        // debug writeln(e.attrs);
-        auto att = visit(e.attrs);// TODO: make lazy
-        const newEnv = new Env(env, att.attrs);
+    void visit(in ExprWith expr) {
+        // debug writeln(expr.attrs);
+        auto att = visit(expr.attrs);// TODO: make lazy
+        auto newEnv = new Env(env, att.attrs);
         env = newEnv;
-        visit(e.body);
+        visit(expr.body);
         env = newEnv.up;
     }
 
-    void visit(in ExprIf e) {
-        if (visit(e.cond).boolean)
-            visit(e.then);
+    void visit(in ExprIf expr) {
+        if (visit(expr.cond).boolean)
+            visit(expr.then);
         else
-            visit(e.else_);
+            visit(expr.else_);
     }
 
-    void visit(in ExprAssert e) {
-        assert(visit(e.cond).boolean);
-        visit(e.body);
+    void visit(in ExprAssert expr) {
+        assert(visit(expr.cond).boolean);
+        visit(expr.body);
     }
 }
 
-public Value eval(in Expr e, ref in Env env = staticBaseEnv) /*pure*/ {
-    assert(e);
+public ref Value eval(in Expr expr, ref Env env = staticBaseEnv) /*pure*/ {
+    assert(expr);
+    if (auto v = expr in env.cache) {
+        assert(0);
+        //return *v;
+    }
     auto ev = new Evaluator(&env);
-    e.accept(ev);
-    return ev.value;
+    expr.accept(ev);
+    // env.cache[expr] = ev.value;
+    assert(ev.value.type != Type.Thunk);
+    return *ev.value;//env.cache[expr];
 }
 
 unittest {

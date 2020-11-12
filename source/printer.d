@@ -72,7 +72,7 @@ unittest {
     static assert(escapeString("x\\$\"\n\t\r") == `"x\\\$\"\n\t\r"`);
 }
 
-private class Printer(W) if (isStringWriter!W) : Visitor {
+private class Printer(W) if (isStringWriter!W) : ConstVisitors {
     private static immutable string[Tok] ops;
 
     shared static this() {

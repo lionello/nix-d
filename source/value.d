@@ -5,11 +5,13 @@ public import nix.parser;
 debug import std.stdio : writeln;
 import std.conv : to;
 
-alias Bindings = Value[string];
+// alias LazyValue = Value delegate(); // TODO: use this instead of thunk
+
+alias Bindings = Value*[string];
 
 @property
 static Bindings empty() {
-    Bindings _empty = ["": Value.NULL];
+    Bindings _empty = ["": null];
     _empty.remove("");
     return _empty;
 }
@@ -24,11 +26,12 @@ unittest {
     assert(aa1 == aa2);
 }
 
-alias PrimOp = Value function(in Value[] args...) /*pure*/;
+alias PrimOp = Value function(Value*[] args...) /*pure*/;
 
 struct Env {
-    const(Env)* up;
-    const(Bindings) vars;
+    Env* up;
+    Bindings vars;
+    Value[const(Expr)] cache;
     // const(ExprWith) hasWith;
 }
 
@@ -48,12 +51,13 @@ enum Type : byte {
     PrimOp,
     PrimOpApp,
     App,
+    // Ref,//test
     // External,
     // Error,
     // Blackhole,
 }
 
-string typeOf(in Value v) @nogc @safe pure nothrow {
+string typeOf(in Value v) @nogc @trusted pure nothrow {
     final switch(v.type) {
     case Type.Null: return "null";
     case Type.String: return "string";
@@ -63,6 +67,7 @@ string typeOf(in Value v) @nogc @safe pure nothrow {
     case Type.List: return "list";
     case Type.Attrs: return "set";
     case Type.Path: return "path";
+    // case Type.Ref: return typeOf(*v.r);
     case Type.App:
     case Type.Lambda:
     case Type.PrimOp:
@@ -74,9 +79,12 @@ string typeOf(in Value v) @nogc @safe pure nothrow {
 alias PathSet = bool[string];
 
 struct Value {
-    static immutable NULL = Value();
-    static immutable FALSE = Value(false);
-    static immutable TRUE = Value(true);
+    @property
+    static Value NULL() { return Value(); }
+    @property
+    static Value FALSE() { return Value(false); }
+    @property
+    static Value TRUE() { return Value(true); }
 
     private union {
         struct {
@@ -88,16 +96,23 @@ struct Value {
         NixInt i;
         NixFloat f;
         bool b;
-        const(Value)[] l;
+        Value*[] l;
         Bindings a;
         const(ExprLambda) el;
         struct {
             const(Expr) t;
-            const(Env)* e;
+            Env* e;
         }
         PrimOp op;
+        Value* r;
     }
     Type type;
+
+    // this(Value* r) pure {
+    //     assert(r);
+    //     this.type = Type.Ref;
+    //     this.r = r;
+    // }
 
     this(string str, PathSet context) pure {
         this.type = Type.String;
@@ -128,7 +143,7 @@ struct Value {
         this.b = boolean;
     }
 
-    this(in Value[] list) pure {
+    this(Value*[] list) pure {
         this.type = Type.List;
         this.l = list;
     }
@@ -138,7 +153,7 @@ struct Value {
         this.a = attrs;
     }
 
-    this(in ExprLambda lambda, in Env* env) pure {
+    this(in ExprLambda lambda, Env* env) pure {
         assert(lambda);
         assert(env);
         this.type = Type.Lambda;
@@ -146,11 +161,11 @@ struct Value {
         this.e = env;
     }
 
-    this(in Expr val, in Env* env) pure {
-        assert(val);
+    this(in Expr expr, Env* env) pure {
+        assert(expr);
         assert(env);
         this.type = Type.Thunk;
-        this.t = val;
+        this.t = expr;
         this.e = env;
     }
 
@@ -160,15 +175,15 @@ struct Value {
         this.op = primOp;
     }
 
-    this(PrimOp primOp, in Value[] args...) pure {
+    this(PrimOp primOp, Value*[] args...) pure {
         assert(primOp);
         this.type = Type.PrimOpApp;
-        this.l = Value(primOp) ~ args;
+        this.l = new Value(primOp) ~ args;
     }
 
-    this(in Value left, in Value right) pure {
+    this(ref Value left, ref Value right) pure {
         this.type = Type.App;
-        this.l = [left, right];
+        this.l = [&left, &right];
     }
 
     @property bool isNull() pure const nothrow {
@@ -196,7 +211,12 @@ struct Value {
         return s;
     }
 
-    @property const(Bindings) attrs() pure const nothrow {
+    @property Bindings attrs() pure nothrow {
+        assert(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
+        return a;
+    }
+
+    @property const(Bindings) attrs() pure nothrow const {
         assert(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
         return a;
     }
@@ -206,18 +226,18 @@ struct Value {
         return b;
     }
 
-    @property const(Value)[] list() pure const nothrow {
+    @property Value*[] list() pure nothrow {
         assert(type == Type.List, "value is "~typeOf(this)~" while a list was expected");
         return l;
     }
 
-    @property const(Value)[] app() pure const nothrow {
+    @property Value*[] app() pure nothrow {
         assert(type == Type.App, "value is "~typeOf(this)~" while a function application was expected");
         assert(l.length == 2);
         return l;
     }
 
-    @property const(Expr) thunk() pure const nothrow {
+    @property const(Expr) thunk() pure nothrow {
         assert(type == Type.Thunk, "value is "~typeOf(this)~" while a thunk was expected");
         return t;
     }
@@ -226,12 +246,12 @@ struct Value {
         return type == Type.Int ? i : (type == Type.Float ? f : real.nan);
     }
 
-    @property const(Env)* env() pure const nothrow {
+    @property Env* env() pure nothrow {
         assert(type == Type.Lambda || type == Type.Thunk);
         return e;
     }
 
-    @property const(ExprLambda) lambda() pure const nothrow {
+    @property const(ExprLambda) lambda() pure nothrow {
         assert(type == Type.Lambda, "value is "~typeOf(this)~" while a lambda was expected");
         return el;
     }
@@ -242,7 +262,7 @@ struct Value {
         return op;
     }
 
-    @property const(Value)[] primOpArgs() pure const nothrow {
+    @property Value*[] primOpArgs() pure nothrow {
         assert(type == Type.PrimOpApp, "value is "~typeOf(this)~" while a function application was expected");
         return l[1..$];
     }
@@ -250,7 +270,17 @@ struct Value {
     @property PathSet context() pure const nothrow {
         if (type == Type.Path) return [s:true];
         assert(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
-        return null;
+        return null; // TODO
+    }
+
+    // @property ref Value deref() pure nothrow {
+    //     return type == Type.Ref ? r.deref : this;
+    // }
+
+    @property Value* dup() {
+        auto v = new Value;
+        *v = this;
+        return v;
     }
 
     Value opBinary(string OP)(auto ref const Value rhs) pure const {
@@ -344,8 +374,9 @@ struct Value {
         case Type.Bool:
             return type == v.type && b == v.b;
         case Type.App:
+            // return type == v.type && l == v.l;
         case Type.List:
-            return type == v.type && l == v.l;
+            return type == v.type && l is v.l;
         case Type.Attrs:
             return type == v.type && a == v.a;
         case Type.PrimOp:
@@ -357,7 +388,7 @@ struct Value {
         }
     }
 
-    string toString(bool shallow = false) const /*pure*/ {
+    string toString(int depth = 1) const /*pure*/ {
         final switch (type) {
         case Type.Null:
             return "null";
@@ -381,15 +412,15 @@ struct Value {
         case Type.Bool:
             return b ? "true" : "false";
         case Type.List:
-            if (shallow) return "[…]";
+            if (!depth) return "[…]";
             auto s = "[ ";
-            foreach (e; l) s ~= e.toString(true) ~ ' ';
+            foreach (e; l) s ~= e.toString(depth - 1) ~ ' ';
             return s ~ ']';
         case Type.Attrs:
-            if (shallow) return "{…}";
+            if (!depth) return "{…}";
             auto s = "{ ";
             // FIXME: detect infinite recursion
-            foreach (k, v; a) s ~= k ~ " = " ~ v.toString(true) ~ "; ";
+            foreach (k, v; a) s ~= k ~ " = " ~ v.toString(depth - 1) ~ "; ";
             return s ~ '}';
         case Type.Lambda:
             return "<LAMBDA>";
