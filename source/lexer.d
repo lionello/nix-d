@@ -81,99 +81,23 @@ enum Tok {
     OR_KW,
 }
 
-/// Associativity of operators
-enum Associativity {
-    NONE,
-    LEFT,
-    RIGHT,
-}
-
-private auto precedence(Tok tok) pure {
-    struct Precedence {
-        int prec;
-        Associativity assoc;
-    }
-    switch (tok) {
-    case Tok.SELECT:
-        return Precedence(13, Associativity.NONE);
-    case Tok.APP:
-        return Precedence(12, Associativity.NONE);
-    case Tok.NEGATE:
-        return Precedence(11, Associativity.NONE);
-    case Tok.HAS_ATTR:
-        return Precedence(10, Associativity.NONE);
-    case Tok.CONCAT:
-        return Precedence(9, Associativity.RIGHT);
-    case Tok.MUL:
-    case Tok.DIV:
-        return Precedence(8, Associativity.LEFT);
-    case Tok.ADD:
-    case Tok.SUB:
-        return Precedence(7, Associativity.LEFT);
-    case Tok.NOT:
-        return Precedence(6, Associativity.LEFT);
-    case Tok.UPDATE:
-        return Precedence(5, Associativity.RIGHT);
-    case Tok.LT:
-    case Tok.LEQ:
-    case Tok.GT:
-    case Tok.GEQ:
-        return Precedence(4, Associativity.NONE);
-    case Tok.EQ:
-    case Tok.NEQ:
-        return Precedence(3, Associativity.NONE);
-    case Tok.AND:
-    case Tok.OR:
-        return Precedence(2, Associativity.LEFT);
-    case Tok.IMPL:
-        return Precedence(1, Associativity.RIGHT);
-    default:
-        import std.conv:to;
-        assert(0, "no precedence for op "~to!string(tok));
-    }
-}
-
-/// Returns the relative associativity of two given operators
-Associativity associativity(Tok left, Tok right) pure {
-    const lp = left.precedence;
-    const rp = right.precedence;
-    // debug writeln("%prec ", lp, " ", rp);
-    if (lp.prec < rp.prec) {
-        return Associativity.RIGHT;
-    } else if (lp.prec > rp.prec) {
-        return Associativity.LEFT;
-    } else {
-        return lp.assoc;
-    }
-}
-
-unittest {
-    assert(associativity(Tok.LEQ, Tok.LEQ) == Associativity.NONE);
-    assert(associativity(Tok.MUL, Tok.ADD) == Associativity.LEFT);
-    assert(associativity(Tok.SUB, Tok.SUB) == Associativity.LEFT);
-    assert(associativity(Tok.ADD, Tok.MUL) == Associativity.RIGHT);
-    assert(associativity(Tok.CONCAT, Tok.CONCAT) == Associativity.RIGHT);
+@property bool isComment(Tok tok) pure @safe nothrow @nogc {
+    return tok == Tok.COMMENT || tok == Tok.MULTILINE;
 }
 
 /// Location in source file
 struct Loc {
-    uint line; //, col;
+    uint line; //, column;
 }
 
 /// A lexed token
 struct Token {
     Tok tok;
-    union {
-        string s;
-        // Token[] t;
-        // NixFloat f;
-        // NixInt n;
-    }
-
+    string s;
     Loc loc;
 }
 
-// https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L91
+// From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L91
 private bool isIdChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
@@ -182,13 +106,13 @@ private bool isIdChar(dchar d) pure {
     case '_':
     case '\'':
     case '-':
-            return true;
+        return true;
     default:
         return false;
     }
 }
 
-// https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
+// From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
 private bool isUriSchemeChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
@@ -197,13 +121,13 @@ private bool isUriSchemeChar(dchar d) pure {
     case '+':
     case '-':
     case '.':
-            return true;
+        return true;
     default:
         return false;
     }
 }
 
-// https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
+// From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
 private bool isUriPathChar(dchar d) pure {
     switch (d) {
     case '!':
@@ -218,13 +142,13 @@ private bool isUriPathChar(dchar d) pure {
     case '_':
     case 'a': .. case 'z':
     case '~':
-            return true;
+        return true;
     default:
         return false;
     }
 }
 
-// https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L94
+// From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L94
 private bool isPathChar(dchar d) pure {
     switch (d) {
     case 'a': .. case 'z':
@@ -234,13 +158,14 @@ private bool isPathChar(dchar d) pure {
     case '_':
     case '-':
     case '+':
-            return true;
+        return true;
     default:
         return false;
     }
 }
 
-private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
+// Parse tokens within `${…}`, skipping whitespace and comments (by default)
+private Token[] parseDollar(R)(ref R input, bool canonical = true) pure if (isForwardRange!R) {
     assert(input.front == '$');
     input.popFront(); // eat the $
     if (input.front != '{') {
@@ -251,7 +176,7 @@ private Token[] parseDollar(R)(ref R input) pure if (isForwardRange!R) {
     auto level = 1;
     while (true) {
         const t = popToken(input, true);
-        if (t.tok == Tok.WHITESPACE || t.tok == Tok.COMMENT) continue;
+        if ((t.tok == Tok.WHITESPACE || t.tok.isComment) && canonical) continue;
         tokens ~= t;
         switch (t.tok) {
         case Tok.DOLLAR_CURLY:
@@ -279,7 +204,7 @@ unittest {
     assert([
         Token(Tok.DOLLAR_CURLY),
         Token(Tok.IDENTIFIER, "a"),
-        // Token(Tok.WHITESPACE, " "),
+        Token(Tok.WHITESPACE, " "),
         Token(Tok.ADD),
         Token(Tok.LEFT_CURLY),
         Token(Tok.IDENTIFIER, "b"),
@@ -294,10 +219,11 @@ unittest {
         Token(Tok.RIGHT_CURLY),
         Token(Tok.SELECT),
         Token(Tok.IDENTIFIER, "b"),
-        Token(Tok.RIGHT_CURLY)] == parseDollar(r));
+        Token(Tok.RIGHT_CURLY)] == parseDollar(r, false));
     assert(r.empty, r);
 }
 
+/// Convert a character to its (unescaped) ASCII value
 private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
     switch (ch) {
     case 'n': return '\n';
@@ -308,6 +234,9 @@ private C unescapeChar(C)(C ch) @safe @nogc pure nothrow {
 }
 
 /// Parse a string literal into separated tokens
+/// Params:
+///     input = forward range of char, wchar, or dchar
+///     popOpen = when `true` will pop the initial double quote (`"`); false otherwise
 Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange!R) {
     Token[] tokens;
     if (popOpen) {
@@ -698,6 +627,7 @@ unittest {
     }
 }
 
+/// Utility method to return the prefix of a range
 private T[] before(T)(T[] all, T[] after) pure {
     return all[0 .. after.ptr - all.ptr];
 }
@@ -734,8 +664,9 @@ private Tok tokenizeIdent(in char[] id) pure nothrow {
     }
 }
 
-/// Pop the next token from the given forward range
-Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRange!R) {
+/// Pop the next Token from the given forward range
+Token popToken(R)(ref R input, bool explodeString) pure if (isForwardRange!R) {
+    if (input.empty) return Token(Tok.ERROR);
     const save = input.save;
     const tok = popNextTok(input, explodeString);
     string body;
@@ -755,7 +686,6 @@ Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRan
     case Tok.COMMENT:
     case Tok.MULTILINE:
         body = before(save, input);
-        // debug writeln(tok, body);
         break;
     default:
         break;
@@ -763,51 +693,72 @@ Token popToken(R)(ref R input, bool explodeString = false) pure if (isForwardRan
     return Token(tok == Tok.IDENTIFIER ? tokenizeIdent(body) : tok, body);
 }
 
-/// TokenRange is a forward range that returns valid Tokens and tracks line number.
+/// TokenRange is a forward range that returns valid Tokens and tracks the line number.
 struct TokenRange(R) if (isForwardRange!R) {
     private R input;
 
+    /// The current iterated token
     Token front;
 
+    /// Whether to return comments
+    bool comments;
+    /// Whether to return whitespace
+    bool whitespace;
+
+    /// Construct a `TokenRange` from a `char`, `wchar`, or `dchar` `ForwardRange`
     this(in R input) {
         this.input = input;
         this.front.loc = Loc(1);
         popFront();
     }
 
+    /// Copy-constructor
     this(ref return scope const TokenRange!R tr) {
         this.input = tr.input.save();
         this.front = tr.front;
+        this.comments = tr.comments;
+        this.whitespace = tr.whitespace;
     }
 
+    /// Returns true when the range is at the end
     @property bool empty() pure const {
-        switch (front.tok) {
-        case Tok.ERROR:
-        case Tok.WHITESPACE:
-        case Tok.COMMENT:
-        case Tok.MULTILINE:
-            return true;
-        default:
-            return false;
-        }
+        return front.tok == Tok.ERROR;
     }
 
+    /// Advance the input stream to the next Token
     void popFront() pure {
         auto loc = front.loc;
-        front.tok = Tok.ERROR;
-        while (!input.empty) {
-            front = popToken(input);
-            if (!empty)
+        while(true) {
+            front = popToken(input, false);
+            bool repeat = false;
+            switch (front.tok) {
+            case Tok.WHITESPACE:
+                repeat = !whitespace;
+                goto case Tok.STR;
+            case Tok.MULTILINE:
+            case Tok.COMMENT:
+                repeat = !comments;
+                goto case Tok.STR;
+            // case Tok.IND_STR:
+            case Tok.STRING:
+            case Tok.IND_STRING:
+            case Tok.STR:
+                // Update the line number
+                foreach (c; front.s) {
+                    if (c == '\n')
+                        ++loc.line;
+                }
+                if (repeat) continue;
                 break;
-            foreach (c; front.s) {
-                if (c == '\n')
-                    ++loc.line;
+            default:
             }
+            break;
         }
         front.loc = loc;
     }
 
-    auto save() {
+    /// Copy the current range state to a new `TokenRange`
+    @property typeof(this) save() {
         return typeof(this)(this);
     }
 }
@@ -817,7 +768,8 @@ unittest {
     auto r = TokenRange!string(" {/*\n*/} #x");
     const s = r.save();
     assert(!r.empty);
-    assert(r.front.tok == Tok.LEFT_CURLY);
+    assert(r.front.loc.line == 1);
+    assert(r.front.tok == Tok.LEFT_CURLY, r.front.s~".");
     r.popFront();
     assert(r.front.tok == Tok.RIGHT_CURLY);
     r.popFront();

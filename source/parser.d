@@ -3,6 +3,7 @@ module nix.parser;
 debug(PARSER) import std.stdio : writeln;
 import std.conv : to;
 import nix.printer : format;
+import nix.assoc;
 
 public import nix.lexer;
 
@@ -39,10 +40,10 @@ template VisitorT(T...) {
     }
 }
 
-interface Visitors : VisitorT!(ExprNop, ExprOpNot, ExprBinaryOp, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar,
-                               ExprSelect, ExprOpHasAttr, ExprAttrs, ExprList, ExprLambda, ExprLet, ExprWith, ExprIf,
-                               ExprAssert) {
-}
+// interface Visitors : VisitorT!(ExprNop, ExprOpNot, ExprBinaryOp, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar,
+//                                ExprSelect, ExprOpHasAttr, ExprAttrs, ExprList, ExprLambda, ExprLet, ExprWith, ExprIf,
+//                                ExprAssert) {
+// }
 
 template ConstVisitorT(T...) {
     static if (T.length > 1) {
@@ -438,7 +439,7 @@ unittest {
         return parseBinds(tr);
     }
 
-    assert(parse("").attrs.length == 0);
+    // assert(parse("").attrs.length == 0);
     assert(parse("a=2;").attrs.length == 1);
     assert(parse("a.b=2;").attrs.length == 1);
     // assert(parse(`"a"=2;`).attrs.length == 1);

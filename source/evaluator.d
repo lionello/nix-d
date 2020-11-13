@@ -5,6 +5,9 @@ import nix.primops;
 
 debug import std.stdio : writeln;
 
+// Helper for unittest
+private @property Loc L(int line = __LINE__) { return Loc(line); }
+
 ref Value maybeThunk(in Expr e, Env* env) /*pure*/ {
     // debug writeln(__LINE__, env.vars);
     auto thunker = new Thunker(env);
@@ -111,12 +114,12 @@ ref Value forceValue(ref Value value, in Loc pos = Loc()) {
 }
 
 unittest {
-    assert(eval(new ExprVar("__currentTime")).integer);
-    assert(eval(new ExprVar("__typeOf")).primOpArgs);
-    assert("int" == eval(new ExprBinaryOp(Tok.APP, new ExprVar("__typeOf"), new ExprInt(2))).str);
-    assert(eval(new ExprVar("__add")).primOpArgs);
-    assert(eval(new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2))).primOpArgs);
-    assert(5 == eval(new ExprBinaryOp(Tok.APP, new ExprBinaryOp(Tok.APP, new ExprVar("__add"), new ExprInt(2)), new ExprInt(3))).integer);
+    assert(eval(new ExprVar(L, "__currentTime")).integer);
+    assert(eval(new ExprVar(L, "__typeOf")).primOpArgs);
+    assert("int" == eval(new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__typeOf"), new ExprInt(L, 2))).str);
+    assert(eval(new ExprVar(L, "__add")).primOpArgs);
+    assert(eval(new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2))).primOpArgs);
+    assert(5 == eval(new ExprBinaryOp(L, Tok.APP, new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2)), new ExprInt(L, 3))).integer);
 }
 
 string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
@@ -240,9 +243,9 @@ private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprSt
 
 unittest {
     auto thunker = new Thunker(new Env);
-    new ExprInt(42).accept(thunker);
+    new ExprInt(L, 42).accept(thunker);
     assert(thunker.value.integer == 42);
-    new ExprList([new ExprInt(42)]).accept(thunker);
+    new ExprList(L, [new ExprInt(L, 42)]).accept(thunker);
     assert(thunker.value.thunk);
 }
 
@@ -574,7 +577,8 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprAssert expr) {
-        assert(visit(expr.cond).boolean);
+        import nix.printer : format;
+        assert(visit(expr.cond).boolean, "assertion "~format(expr.cond));
         visit(expr.body);
     }
 }
@@ -593,44 +597,44 @@ public ref Value eval(in Expr expr, ref Env env = staticBaseEnv) /*pure*/ {
 }
 
 unittest {
-    auto ZERO = new ExprInt(0);
-    auto false_ = new ExprVar("false");
-    auto true_ = new ExprVar("true");
+    auto ZERO = new ExprInt(L, 0);
+    auto false_ = new ExprVar(L, "false");
+    auto true_ = new ExprVar(L, "true");
     auto ok = Value("ok", null);
 
-    assert(eval(new ExprBinaryOp(Tok.SUB, ZERO, new ExprFloat(3))) == Value(-3.0));
-    assert(eval(new ExprBinaryOp(Tok.AND, false_, true_)) == Value(false));
-    assert(eval(new ExprBinaryOp(Tok.OR, false_, true_)) == Value(true));
+    assert(eval(new ExprBinaryOp(L, Tok.SUB, ZERO, new ExprFloat(L, 3))) == Value(-3.0));
+    assert(eval(new ExprBinaryOp(L, Tok.AND, false_, true_)) == Value(false));
+    assert(eval(new ExprBinaryOp(L, Tok.OR, false_, true_)) == Value(true));
 
-    auto att = new ExprAttrs();
+    auto att = new ExprAttrs(L, );
     // { a = "ok"; }
-    att.attrs["a"] = ExprAttrs.AttrDef(new ExprString("ok"));
-    assert(eval(att) == Value(["a": ok]));
+    att.attrs["a"] = ExprAttrs.AttrDef(new ExprString(L, "ok"));
+    assert(eval(att) == Value(["a": &ok]));
     // { a = "ok"; true = true; }
     att.attrs["true"] = ExprAttrs.AttrDef(true_, true);
-    assert(eval(att) == Value(["a": ok, "true": Value(true)]));
+    assert(eval(att) == Value(["a": &ok, "true": new Value(true)]));
     // { a = "ok"; true = true; b = "p"; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString("b"), new ExprString("p"));
-    assert(eval(att) == Value(["a": ok, "true": Value(true), "b": Value("p", null)]));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "b"), new ExprString(L, "p"));
+    assert(eval(att) == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null)]));
     // rec { a = "ok"; true = true; b = "p"; }
     att.recursive = true;
     // rec { a = "ok"; true = true; b = "p"; c = a; }
-    att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar("a"));
-    assert(eval(att).forceValueDeep == Value(["a": ok, "true": Value(true), "b": Value("p", null), "c": ok])); //needs `rec`
+    att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar(L, "a"));
+    assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok])); //needs `rec`
     // rec { a = "ok"; true = true; b = "p"; c = a; d = b; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString("d"), new ExprVar("b"));
-    assert(eval(att).forceValueDeep == Value(["a": ok, "true": Value(true), "b": Value("p", null), "c": ok, "d": Value("p", null)])); //needs `rec`
-    assert(eval(new ExprFloat(1.1)) == Value(1.1));
-    assert(eval(new ExprInt(42)) == Value(42));
-    assert(eval(new ExprString("foo")) == Value("foo", null));
-    assert(eval(new ExprPath("/fo/o")) == Value("/fo/o"));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "d"), new ExprVar(L, "b"));
+    assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok, "d": new Value("p", null)])); //needs `rec`
+    assert(eval(new ExprFloat(L, 1.1)) == Value(1.1));
+    assert(eval(new ExprInt(L, 42)) == Value(42));
+    assert(eval(new ExprString(L, "foo")) == Value("foo", null));
+    assert(eval(new ExprPath(L, "/fo/o")) == Value("/fo/o"));
     assert(eval(false_) == Value(false));
-    assert(eval(new ExprVar("null")) == Value());
+    assert(eval(new ExprVar(L, "null")) == Value());
     assert(eval(true_) == Value(true));
-    assert(eval(new ExprAssert(true_, new ExprString("ok"))) == ok);
-    assert(eval(new ExprOpNot(true_)) == Value(false));
-    assert(eval(new ExprOpNot(false_)) == Value(true));
-    assert(eval(new ExprIf(true_, new ExprString("ok"), new ExprFloat(1.1))) == ok);
-    assert(eval(new ExprIf(false_, new ExprFloat(1.1), new ExprString("ok"))) == ok);
-    assert(eval(new ExprList([new ExprString("ok")])) == Value([ok]));
+    assert(eval(new ExprAssert(L, true_, new ExprString(L, "ok"))) == ok);
+    assert(eval(new ExprOpNot(L, true_)) == Value(false));
+    assert(eval(new ExprOpNot(L, false_)) == Value(true));
+    assert(eval(new ExprIf(L, true_, new ExprString(L, "ok"), new ExprFloat(L, 1.1))) == ok);
+    assert(eval(new ExprIf(L, false_, new ExprFloat(L, 1.1), new ExprString(L, "ok"))) == ok);
+    assert(eval(new ExprList(L, [new ExprString(L, "ok")])) == Value([&ok]));
 }

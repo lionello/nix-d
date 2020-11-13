@@ -18,11 +18,11 @@ static Bindings empty() {
 
 unittest {
     assert(empty.length == 0);
-    empty["x"] = Value.TRUE;
+    empty["x"] = Value.TRUE.dup;
     assert(empty.length == 0);
     auto aa1 = empty();
     auto aa2 = aa1;
-    aa2["y"] = Value.FALSE;
+    aa2["y"] = Value.FALSE.dup;
     assert(aa1 == aa2);
 }
 
@@ -78,6 +78,19 @@ string typeOf(in Value v) @nogc @trusted pure nothrow {
 
 alias PathSet = bool[string];
 
+private bool arrayPtrEquals(in Value*[] lhs, in Value*[] rhs) pure @nogc @safe {
+    if (lhs.length != rhs.length) return false;
+    foreach (i, p; lhs) if (*p != *rhs[i]) return false;
+    return true;
+}
+
+unittest {
+    assert(arrayPtrEquals([], []));
+    assert(!arrayPtrEquals([], [new Value()]));
+    assert(arrayPtrEquals([new Value()], [new Value()]));
+    assert(arrayPtrEquals([new Value(2)], [new Value(2.0)]));
+}
+
 struct Value {
     @property
     static Value NULL() { return Value(); }
@@ -89,7 +102,7 @@ struct Value {
     private union {
         struct {
             string s;
-            // PathSet c;
+            // PathSet c; // TODO
         }
 
         // string path;
@@ -97,6 +110,7 @@ struct Value {
         NixFloat f;
         bool b;
         Value*[] l;
+        // Value*[2] sl;
         Bindings a;
         const(ExprLambda) el;
         struct {
@@ -104,9 +118,9 @@ struct Value {
             Env* e;
         }
         PrimOp op;
-        Value* r;
     }
     Type type;
+    // private bool list1, list2;
 
     // this(Value* r) pure {
     //     assert(r);
@@ -181,9 +195,11 @@ struct Value {
         this.l = new Value(primOp) ~ args;
     }
 
-    this(ref Value left, ref Value right) pure {
+    this(Value* left, Value* right) pure {
+        assert(left.type == Type.PrimOpApp || left.type == Type.Attrs || left.type == Type.Lambda);
+        assert(right);
         this.type = Type.App;
-        this.l = [&left, &right];
+        this.l = [left, right];
     }
 
     @property bool isNull() pure const nothrow {
@@ -360,7 +376,7 @@ struct Value {
         assert(0, "cannot compare type "~typeOf(this)~" with "~typeOf(rhs));
     }
 
-    bool opEquals()(auto ref const Value v) @trusted @nogc pure const nothrow {
+    bool opEquals()(auto ref const Value v) @trusted @nogc pure const {
         final switch (type) {
         case Type.Null:
             return type == v.type;
@@ -374,11 +390,18 @@ struct Value {
         case Type.Bool:
             return type == v.type && b == v.b;
         case Type.App:
-            // return type == v.type && l == v.l;
         case Type.List:
-            return type == v.type && l is v.l;
+            return type == v.type && arrayPtrEquals(l, v.l);
         case Type.Attrs:
-            return type == v.type && a == v.a;
+            if (type != v.type || a.length != v.a.length) return false;
+            foreach (k, p; a) {
+                assert(p);
+                auto pp = k in v.a;
+                if (pp is null) return false;
+                assert(*pp);
+                if (**pp != *p) return false;
+            }
+            return true;
         case Type.PrimOp:
         case Type.PrimOpApp:
         case Type.Lambda:
@@ -449,13 +472,19 @@ struct Value {
             return b ? 0xCA1C5848 : 0x742D4705;
         case Type.List:
         case Type.App:
-            return hashOf(l, type);
+            auto h = hashOf(type);
+            foreach (i, p; l) h ^= hashOf(*p, i);
+            return h;
         case Type.Attrs:
-            return hashOf(a);
+            size_t h = 0;
+            try {
+                foreach (k, p; a) h ^= hashOf(k, p.toHash());
+            } catch (Exception e) {}
+            return h;
         case Type.PrimOp:
         case Type.PrimOpApp:
         case Type.Lambda:
-            assert(0, "Can't be hashed");
+            assert(0, "Can't hash "~typeOf(this));
         case Type.Thunk:
             assert(0, "Should forceValue before calling toHash");
             // return t.toHash ^ env.vars.toHash;
@@ -475,9 +504,9 @@ unittest {
     assert(Value(true) == Value(true));
     assert(Value(false) == Value(false));
     assert(Value(false) != Value(true));
-    assert(Value([Value(3),Value()]) == Value([Value(3.0),Value()]));
-    assert(Value(["n":Value(4)]) == Value(["n":Value(4.0)]));
-    assert(Value(["n":Value()]) != Value(["k":Value()]));
+    assert(Value([new Value(3), new Value()]) == Value([new Value(3.0), new Value()]));
+    assert(Value(["n":new Value(4)]) == Value(["n":new Value(4.0)]));
+    assert(Value(["n":new Value()]) != Value(["k":new Value()]));
 }
 
 unittest {
@@ -487,8 +516,8 @@ unittest {
     assert(Value("hello\n", null).toString() == `"hello\n"`);
     assert(Value(true).toString() == "true");
     assert(Value(false).toString() == "false");
-    assert(Value([Value()]).toString() == "[ null ]");
-    assert(Value(["n":Value()]).toString() == "{ n = null; }");
+    assert(Value([new Value()]).toString() == "[ null ]");
+    assert(Value(["n":new Value()]).toString() == "{ n = null; }");
 }
 
 unittest {
@@ -512,6 +541,7 @@ unittest {
 }
 
 unittest {
+    auto functor = new Value(["__functor": new Value()]);
     const map = [
         Value(): true,
         Value("/"): true,
@@ -519,9 +549,9 @@ unittest {
         Value(2): true,
         Value(3.0): true,
         Value(true): true,
-        Value([Value()]): true,
-        Value(["null":Value()]): true,
-        Value(Value("/"), Value(2)): true,
+        Value([new Value()]): true,
+        Value(["null": new Value()]): true,
+        Value(functor, new Value(2)): true,
     ];
     assert(Value() in map);
     assert(Value("/") in map);
@@ -535,14 +565,14 @@ unittest {
     assert(Value(4) !in map);
     assert(Value(true) in map);
     assert(Value(false) !in map);
-    assert(Value([Value()]) in map);
-    assert(Value([Value(1)]) !in map);
-    assert(Value(["null":Value()]) in map);
-    assert(Value(["null":Value("/")]) !in map);
-    assert(Value(["asdf":Value()]) !in map);
-    assert(Value(Value("/"), Value(2)) in map);
-    assert(Value([Value("/"), Value(2)]) !in map);
-    assert(Value(Value("/"), Value(2.0)) in map);
-    assert(Value(Value("/"), Value(42)) !in map);
-    assert(Value(Value("/", null), Value(2)) !in map);
+    assert(Value([new Value()]) in map);
+    assert(Value([new Value(1)]) !in map);
+    assert(Value(["null": new Value()]) in map);
+    assert(Value(["null": new Value("/")]) !in map);
+    assert(Value(["asdf": new Value()]) !in map);
+    assert(Value(functor, new Value(2)) in map);
+    assert(Value([functor, new Value(2)]) !in map);
+    assert(Value(functor, new Value(2.0)) in map);
+    assert(Value(functor, new Value(42)) !in map);
+    assert(Value(new Value(["attr": new Value()]), new Value(2)) !in map);
 }

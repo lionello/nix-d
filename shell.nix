@@ -4,6 +4,6 @@ mkShell {
     dmd
     rdmd
     dub
-    ldc
+    #ldc
   ];
 }
