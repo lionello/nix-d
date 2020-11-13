@@ -47,15 +47,15 @@ private Value lessThan(ref Value lhs, ref Value rhs) /*pure*/ {
 }
 
 private Value toString(ref Value arg) /*pure*/ {
-    return Value(coerceToString(arg, true), null);
+    return Value(coerceToString(arg, true), null); // TODO: context?
 }
 
 private Value throw_(ref Value msg) /*pure*/ {
-    throw new Error(msg.str);
+    throw new Error(forceValue(msg).str);
 }
 
 private Value abort(ref Value msg) /*pure*/ {
-    throw new Error("evaluation aborted with the following error message: "~msg.str);
+    throw new Error("evaluation aborted with the following error message: "~forceValue(msg).str);
 }
 
 private Value elemAt(ref Value list, NixInt n) /*pure*/ {
@@ -131,7 +131,7 @@ private Value tail(ref Value list) {
 private Value dirOf(ref Value file) {
     import std.path : dirName;
     const dir = dirName(coerceToString(file));
-    return file.type == Type.Path ? Value(dir) : Value(dir, null);
+    return file.type == Type.Path ? Value(dir) : Value(dir, file.context);
 }
 
 private Value catAttrs(ref Value v, ref Value listOfAttrs) {
@@ -172,7 +172,7 @@ private Value genericClosure(ref Value attr) {
 private Value baseNameOf(ref Value file) {
     import std.path : baseName;
     const dir = baseName(coerceToString(file));
-    return file.type == Type.Path ? Value(dir) : Value(dir, null);
+    return file.type == Type.Path ? Value(dir) : Value(dir, file.context);
 }
 
 private Value concatMap(ref Value fun, ref Value list) {
@@ -185,11 +185,26 @@ private Value concatMap(ref Value fun, ref Value list) {
 
 private Value concatStringsSep(ref Value sep, ref Value list) {
     string s = "";
+    PathSet ps;
     foreach (i, e; forceValue(list).list) {
-        if (i) s ~= sep.str;
-        s ~= e.str;
+        if (i) s ~= forceValue(sep).str;
+        s ~= forceValue(*e).str;
+        // ps ~= TODO
     }
-    return Value(s, null);
+    return Value(s, ps);
+}
+
+private Value unsafeDiscardStringContext(ref Value str) {
+    return Value(forceValue(str).str, null);
+}
+
+private Value substring(ref Value from, ref Value len, ref Value str) {
+    const s = forceValue(str).str;
+    auto start = forceValue(from).integer;
+    auto end = start + forceValue(len).integer;
+    if (start >= s.length) start = end = 0;
+    else if (end > s.length) end = s.length;
+    return Value(s[start..end], str.context);
 }
 
 private Value* wrap(alias F)() {
@@ -303,7 +318,7 @@ static this() {
         "__storePath" : new Value(&notImplemented),
         "__stringLength" : new Value(&notImplemented),
         "__sub" : wrap!(binOp!"-")(),
-        "__substring" : new Value(&notImplemented),
+        "__substring" : wrap!substring(),
         "__tail" : wrap!tail(),
         "throw" : wrap!(throw_)(),
         "__toFile" : new Value(&notImplemented),
@@ -316,7 +331,7 @@ static this() {
         "__tryEval" : new Value(&notImplemented),
         "__typeOf" : wrap!typeOf_(),
         "__unsafeDiscardOutputDependency" : new Value(&notImplemented),
-        "__unsafeDiscardStringContext" : new Value(&notImplemented),
+        "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext(),
         "__unsafeGetAttrPos" : new Value(&notImplemented),
     ];
 

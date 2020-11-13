@@ -382,7 +382,7 @@ struct Value {
             return type == v.type;
         case Type.Path:
         case Type.String:
-            return type == v.type && s == v.s;
+            return type == v.type && s == v.s; // TODO: compare contexts
         case Type.Int:
             return i == v.number;
         case Type.Float:
