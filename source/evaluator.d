@@ -592,7 +592,7 @@ public ref Value eval(in Expr expr, ref Env env = staticBaseEnv) /*pure*/ {
     auto ev = new Evaluator(&env);
     expr.accept(ev);
     // env.cache[expr] = ev.value;
-    assert(ev.value.type != Type.Thunk);
+    // assert(ev.value.type != Type.Thunk);
     return *ev.value;//env.cache[expr];
 }
 

@@ -28,7 +28,8 @@ void println(in Expr expr) {
 }
 
 void print(W)(in Expr expr, auto ref W writer) if (isStringWriter!W) {
-    expr.accept(new Printer!W(writer));
+    if (!expr) writer.write("Ø");
+    else expr.accept(new Printer!W(writer));
 }
 
 void println(W)(in Expr expr, auto ref W writer) if (isStringWriter!W) {

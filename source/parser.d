@@ -583,10 +583,10 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
             return concat;
         case Tok.DOLLAR_CURLY:
             input.popFront(); // eat the ${
-            es ~= parseExpression(input);
+            auto expr = parseExpression(input);
+            if (expr) es ~= expr;
+            debug(PARSER) writeln(format(expr));
             import std.conv:to;
-            debug import std.stdio:writeln;
-            debug writeln(format(es[$-1]));
             assert(input.front.tok == Tok.RIGHT_CURLY, "Expected } but found " ~ to!string(input.front.tok));
             input.popFront(); // eat the }
             break;

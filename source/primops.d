@@ -121,7 +121,6 @@ private Value map(ref Value fun, ref Value list) {
     foreach (e; forceValue(list).list) {
         output ~= callFunction(fun, *e, Loc()).dup;
     }
-    debug writeln("map=",output);
     return Value(output);
 }
 
@@ -176,6 +175,23 @@ private Value baseNameOf(ref Value file) {
     return file.type == Type.Path ? Value(dir) : Value(dir, null);
 }
 
+private Value concatMap(ref Value fun, ref Value list) {
+    Value*[] output;
+    foreach (e; forceValue(list).list) {
+        output ~= callFunction(fun, *e, Loc()).list;
+    }
+    return Value(output);
+}
+
+private Value concatStringsSep(ref Value sep, ref Value list) {
+    string s = "";
+    foreach (i, e; forceValue(list).list) {
+        if (i) s ~= sep.str;
+        s ~= e.str;
+    }
+    return Value(s, null);
+}
+
 private Value* wrap(alias F)() {
     import std.traits : arity;
     static Value primop(Value*[] args...) {
@@ -214,8 +230,8 @@ static this() {
         "__catAttrs" : wrap!catAttrs(),
         "__compareVersions" : new Value(&notImplemented),
         "__concatLists" : new Value(&notImplemented),
-        "__concatMap" : new Value(&notImplemented),
-        "__concatStringsSep" : new Value(&notImplemented),
+        "__concatMap" : wrap!concatMap(),
+        "__concatStringsSep" : wrap!concatStringsSep(),
         "__currentSystem" : new Value("x86_64-darwin", null),
         "__currentTime" : new Value(time(null)),
         "__deepSeq" : new Value(&notImplemented),
