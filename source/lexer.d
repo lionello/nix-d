@@ -4,8 +4,19 @@ public import std.range;
 debug import std.stdio : writeln;
 import std.range.primitives : isForwardRange, ElementType;
 import std.ascii : isWhite, isDigit;
+import std.conv : text;
 
 private enum EOF = -1;
+
+class ParseException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
+void enforce(E = ParseException, T)(in T test, lazy string msg, string file = __FILE__, size_t line = __LINE__) pure {
+    if (!test) throw new E(msg, file, line);
+}
 
 /// Lexical tokens
 enum Tok {
@@ -244,7 +255,7 @@ Token[] parseString(R)(ref R input, bool popOpen = true) pure if (isForwardRange
         input.popFront(); // eat the "
         tokens ~= Token(Tok.STRING_OPEN);
     }
-    assert(!input.empty);
+    enforce(!input.empty, "premature end of string");
     string str;
     void flush() {
         if (str) { tokens ~= Token(Tok.STR, str); str = null; }
@@ -295,11 +306,11 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
     if (popOpen) {
         assert(input.front == '\'');
         input.popFront(); // eat the 1st '
-        assert(input.front == '\'');
+        enforce(input.front == '\'', "syntax error, unexpected "~input.front.text~", expecting '");
         input.popFront(); // eat the 2nd '
         tokens ~= Token(Tok.IND_STRING_OPEN);
     }
-    assert(!input.empty);
+    enforce(!input.empty, "premature end of string");
     string str;
     void flush() {
         if (str) { tokens ~= Token(Tok.STR, str); str = null; }
@@ -411,7 +422,7 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
             return Tok.PATH;
         if (!input.empty && input.front == '.') {
             input.popFront(); // eat the .
-            assert(input.front == '.');
+            enforce(input.front == '.', "syntax error, unexpected "~input.front.text~", expecting .");
             input.popFront(); // eat the .
             return Tok.ELLIPSIS;
         }
@@ -472,11 +483,11 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
             return Tok.NOT;
         }
     case '&':
-        assert(input.front == '&');
+        enforce(input.front == '&', "syntax error, unexpected "~input.front.text~", expecting &");
         input.popFront(); // eat the &
         return Tok.AND;
     case '|':
-        assert(input.front == '|');
+        enforce(input.front == '|', "syntax error, unexpected "~input.front.text~", expecting |");
         input.popFront(); // eat the |
         return Tok.OR;
     case ':':
@@ -533,7 +544,7 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
         parseString(input, false);
         return Tok.STRING;
     case '\'':
-        assert(input.front == '\'');
+        enforce(input.front == '\'', "syntax error, unexpected "~input.front.text~", expecting '");
         input.popFront(); // eat the 2nd '
         if (explodeString)
             return Tok.IND_STRING_OPEN;
@@ -581,8 +592,8 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
             input.popFront();
         return Tok.IDENTIFIER;
     case '~':
-        assert(input.front == '/');
-        assert(parsePath(input, true));
+        enforce(input.front == '/', "syntax error, unexpected "~input.front.text~", expecting /");
+        enforce(parsePath(input, true), "syntax error, expecting a path");
         return Tok.HPATH;
     case '$':
         if (input.front == '{') {
@@ -591,7 +602,7 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
         }
         goto default;
     default:
-        assert(0, input.length > 55 ? input[0 .. 55] : input);
+        throw new ParseException("syntax error, unexpected "~(input.length > 55 ? input[0 .. 55] : input));
     }
 }
 

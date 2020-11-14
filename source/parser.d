@@ -1,7 +1,7 @@
 module nix.parser;
 
 debug(PARSER) import std.stdio : writeln;
-import std.conv : to;
+import std.conv : text, to;
 import nix.printer : format;
 import nix.assoc;
 
@@ -586,8 +586,7 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
             auto expr = parseExpression(input);
             if (expr) es ~= expr;
             debug(PARSER) writeln(format(expr));
-            import std.conv:to;
-            assert(input.front.tok == Tok.RIGHT_CURLY, "Expected } but found " ~ to!string(input.front.tok));
+            enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected "~text(input.front.tok)~", expected }");
             input.popFront(); // eat the }
             break;
         default:
@@ -887,7 +886,7 @@ L_next:
         case Tok.OR:
         case Tok.IMPL:
             const assoc = associativity(op, op2);
-            assert(assoc != Associativity.NONE, "Non-associative");
+            enforce(assoc != Associativity.NONE, "Non-associative");
             if (assoc == Associativity.LEFT) {
                 left = new ExprBinaryOp(loc, op, left, right);
                 goto L_next;
@@ -903,15 +902,6 @@ L_next:
     default:
         return left;
     }
-}
-
-private void assertThrow(E=Error,T)(lazy T dg, in char[] msg = "Expected thrown "~E.stringof~", but got "~T.stringof) {
-    try {
-        dg();
-    } catch(E) {
-        return;
-    }
-    assert(false, msg);
 }
 
 unittest {
@@ -938,8 +928,9 @@ unittest {
     with(cast(ExprBinaryOp) parse("10 - 6 - -1")) { assert(cast(ExprBinaryOp) left); }
     with(cast(ExprBinaryOp) parse("(10 - 6) - -1")) { assert(cast(ExprNop) left); }
     with(cast(ExprBinaryOp) parse("10 - (6 - -1)")) { assert(cast(ExprInt) left); }
-    assertThrow(parse("2 == 3 == 4"));
-    assertThrow(parse("2 != 3 != 4"));
+    import std.exception: assertThrown;
+    assertThrown(parse("2 == 3 == 4"));
+    assertThrown(parse("2 != 3 != 4"));
 }
 
 private Expr parseApp(R)(ref R input) pure if (isTokenRange!R) {

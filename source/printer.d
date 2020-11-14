@@ -3,7 +3,7 @@ module nix.printer;
 static import std.stdio;
 
 import nix.parser;
-private import std.conv : to;
+private import std.conv : text;
 private import std.range : isOutputRange;
 
 enum isStringWriter(W) = is(typeof(W.init.write("")));
@@ -139,11 +139,11 @@ private class Printer(W) if (isStringWriter!W) : ConstVisitors {
     }
 
     void visit(in ExprInt e) {
-        write(to!string(e.n));
+        write(text(e.n));
     }
 
     void visit(in ExprFloat e) {
-        write(to!string(e.f));
+        write(text(e.f));
     }
 
     void visit(in ExprString e) {

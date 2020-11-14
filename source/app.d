@@ -19,8 +19,8 @@ void main(string[] args) {
         scope (failure)
             writeln(filename, ", error on line ", tr.front.loc.line);
         const ast = parse(tr);
-        print(ast);
-        write("=");
+        // print(ast);
+        // writeln("=");
         auto value = eval(ast);
         value.forceValueDeep();
         if (value.type == Type.Lambda) {

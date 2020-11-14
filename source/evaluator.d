@@ -5,6 +5,18 @@ import nix.primops;
 
 debug import std.stdio : writeln;
 
+class EvalException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
+class AssertionException : EvalException {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
 // Helper for unittest
 private @property Loc L(int line = __LINE__) { return Loc(line); }
 
@@ -126,10 +138,11 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
     forceValue(value);
     switch (value.type) {
     case Type.String:
+        // TODO: copy context to out param
         return value.str;
     case Type.Path:
-        // TODO: make absolute/canon?
-        return value.path;
+        // TODO: by default this would copy to store
+        return canonPath(value.path);
     case Type.Attrs:
         auto toString = "__toString" in value.attrs;
         if (toString) {
@@ -137,14 +150,14 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
             auto s = coerceToString(str, coerceMore);
             if (s) return s;
         }
-        auto i = "outPath" in value.attrs;
-        assert(i, "cannot coerce a set to a string");
-        return coerceToString(**i, coerceMore);
-    // case Type.External: todo
-    default:
+        auto outPath = "outPath" in value.attrs;
+        if (outPath) {
+            return coerceToString(**outPath, coerceMore);
+        }
         break;
-    }
-    if (coerceMore) {
+    // case Type.External: TODO
+    default:
+        if (!coerceMore) break;
         switch (value.type) {
         case Type.Bool:
             return value.boolean ? "1" : "";
@@ -152,8 +165,8 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
             return "";
         case Type.List:
             string result;
-            foreach(i, ref v; value.list) {
-                if (i) result ~= ' ';
+            foreach(outPath, ref v; value.list) {
+                if (outPath) result ~= ' ';
                 result ~= coerceToString(value, coerceMore);
             }
             return result;
@@ -161,10 +174,9 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
         case Type.Float:
             return value.toString();
         default:
-            break;
         }
     }
-    assert(0, "cannot coerce "~value.typeOf~" to a string");
+    throw new TypeException("cannot coerce "~value.typeOf~" to a string");
 }
 
 unittest {
@@ -174,13 +186,27 @@ unittest {
 
 string coerceToPath(ref Value v) {
     const path = coerceToString(v, false);
-    if (path == "" || path[0] != '/') throw new Error("string "~path~" doesn't represent an absolute path");
+    if (path == "" || path[0] != '/') throw new Exception("string "~path~" doesn't represent an absolute path");
     return path;
 }
 
-private string canonicalPath(string p) @safe {
-    import std.path : expandTilde, absolutePath, asNormalizedPath;
-    return asNormalizedPath(absolutePath(expandTilde(p))).array;
+private string absPath(string path) @safe {
+    assert(path != "");
+    if (path[0] == '~') {
+        import std.path : expandTilde;
+        path = expandTilde(path);
+    }
+    if (path[0] != '/') {
+        import std.path : absolutePath;
+        path = absolutePath(path);
+    }
+    return canonPath(path);
+}
+
+private string computeStorePathForPath(string path) @safe {
+    import std.path : baseName;
+    // FIXME: implement hashing
+    return "/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
 }
 
 private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
@@ -227,7 +253,7 @@ private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprSt
     }
 
     void visit(in ExprPath e) {
-        value = new Value(canonicalPath(e.p));
+        value = new Value(absPath(e.p));
     }
 
     void visit(in ExprVar e) {
@@ -261,6 +287,7 @@ private bool eqValues(ref Value lhs, ref Value rhs) {
         return true;
     // } else if (l.type == Type.Attrs && r.type == Type.Attrs) {
     //     if (l.attrs.length != r.attrs.length) return false;
+    //     TODO
     } else {
         // Fallback to opEquals
         return l == r;
@@ -277,9 +304,8 @@ class Evaluator : ConstVisitors {
     }
 
     private ref Value visit(in Expr expr) {
-        assert(expr);//test
-        if (expr)
-            expr.accept(this);
+        assert(expr);
+        expr.accept(this);
         return *value;
     }
 
@@ -296,12 +322,12 @@ class Evaluator : ConstVisitors {
         case Tok.AND:
             if (visit(expr.left).boolean)
                 visit(expr.right);
-            assert(value.type == Type.Bool, "a boolean was expected");
+            enforce!TypeException(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.OR:
             if (!visit(expr.left).boolean)
                 visit(expr.right);
-            assert(value.type == Type.Bool, "a boolean was expected");
+            enforce!TypeException(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.EQ:
             auto lhs = visit(expr.left);
@@ -333,11 +359,19 @@ class Evaluator : ConstVisitors {
             value = callFunction(partial, rhs, expr.loc).dup;
             break;
         case Tok.ADD:
-            // auto __add = lookupVar("__add"); // can be overridden
-            // Strangely enough, + operator cannot currently be overridden
             auto lhs = visit(expr.left);
             auto rhs = visit(expr.right);
-            value = (forceValue(lhs) + forceValue(rhs)).dup;
+            if (forceValue(lhs).isNumber) {
+                // Strangely enough, + operator cannot currently be overridden
+                // auto __add = lookupVar("__add"); // can be overridden
+                value = (lhs + forceValue(rhs)).dup;
+            } else {
+                auto str = coerceToString(rhs);
+                if (lhs.type == Type.String && rhs.type == Type.Path) {
+                    str = computeStorePathForPath(str);
+                }
+                value = (lhs + Value(str, null)).dup;
+            }
             break;
         case Tok.NEGATE:
         case Tok.SUB:
@@ -412,7 +446,7 @@ class Evaluator : ConstVisitors {
             if (v)
                 return **v;
         }
-        throw new Error("undefined variable "~name);
+        throw new Exception("undefined variable "~name);
     }
 
     void visit(in ExprInt expr) {
@@ -428,7 +462,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprPath expr) {
-        value = new Value(canonicalPath(expr.p));
+        value = new Value(absPath(expr.p));
     }
 
     void visit(in ExprVar expr) {
@@ -459,7 +493,7 @@ class Evaluator : ConstVisitors {
                 visit(expr.def);
                 break;
             }
-            throw new Error("attribute missing: " ~ name);
+            throw new Exception("attribute missing: " ~ name);
         }
         forceValue(*value, Loc()); // TODO: use pos from attr 'j'
     }
@@ -578,7 +612,7 @@ class Evaluator : ConstVisitors {
 
     void visit(in ExprAssert expr) {
         import nix.printer : format;
-        assert(visit(expr.cond).boolean, "assertion "~format(expr.cond));
+        enforce!AssertionException(visit(expr.cond).boolean, "assertion "~format(expr.cond).idup~" failed");
         visit(expr.body);
     }
 }

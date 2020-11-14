@@ -4,6 +4,18 @@ debug import std.stdio:writeln;
 
 import nix.value, nix.evaluator;
 
+class AbortException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super("evaluation aborted with the following error message: "~msg, file, line);
+    }
+}
+
+class ThrownException : AssertionException {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
 private Value genList(ref Value func, ref Value count) {
     const length = forceValue(count).integer;
     Value*[] list;
@@ -51,11 +63,11 @@ private Value toString(ref Value arg) /*pure*/ {
 }
 
 private Value throw_(ref Value msg) /*pure*/ {
-    throw new Error(forceValue(msg).str);
+    throw new ThrownException(coerceToString(msg));
 }
 
 private Value abort(ref Value msg) /*pure*/ {
-    throw new Error("evaluation aborted with the following error message: "~forceValue(msg).str);
+    throw new AbortException(coerceToString(msg));
 }
 
 private Value elemAt(ref Value list, NixInt n) /*pure*/ {
@@ -188,23 +200,33 @@ private Value concatStringsSep(ref Value sep, ref Value list) {
     PathSet ps;
     foreach (i, e; forceValue(list).list) {
         if (i) s ~= forceValue(sep).str;
-        s ~= forceValue(*e).str;
+        s ~= coerceToString(*e);
         // ps ~= TODO
     }
     return Value(s, ps);
 }
 
 private Value unsafeDiscardStringContext(ref Value str) {
-    return Value(forceValue(str).str, null);
+    return Value(coerceToString(str), null);
 }
 
 private Value substring(ref Value from, ref Value len, ref Value str) {
-    const s = forceValue(str).str;
+    const s = coerceToString(str);
     auto start = forceValue(from).integer;
     auto end = start + forceValue(len).integer;
     if (start >= s.length) start = end = 0;
     else if (end > s.length) end = s.length;
     return Value(s[start..end], str.context);
+}
+
+private Value seq(ref Value a, ref Value b) {
+    forceValue(a);
+    return forceValue(b);
+}
+
+private Value deepSeq(ref Value a, ref Value b) {
+    forceValueDeep(a);
+    return forceValue(b);
 }
 
 private Value* wrap(alias F)() {
@@ -228,14 +250,15 @@ static this() {
     static Value notImplemented(Value*[] args...) /*pure*/ {
         assert(0, "not implemented");
     }
+    auto ni = new Value(&notImplemented);
 
     Bindings globals = [
         "abort" : wrap!abort(),
         "__add" : wrap!(binOp!"+")(),
-        "__addErrorContext" : new Value(&notImplemented),
+        "__addErrorContext" : ni,
         "__all" : wrap!all(),
         "__any" : wrap!any(),
-        "__appendContext" : new Value(&notImplemented),
+        "__appendContext" : ni,
         "__attrNames" : wrap!attrNames(),
         "__attrValues" : wrap!attrValues(),
         "baseNameOf" : wrap!baseNameOf(),
@@ -243,96 +266,96 @@ static this() {
         "__bitOr" :  wrap!(binOp!"|")(),
         "__bitXor" :  wrap!(binOp!"^")(),
         "__catAttrs" : wrap!catAttrs(),
-        "__compareVersions" : new Value(&notImplemented),
-        "__concatLists" : new Value(&notImplemented),
+        "__compareVersions" : ni,
+        "__concatLists" : ni,
         "__concatMap" : wrap!concatMap(),
         "__concatStringsSep" : wrap!concatStringsSep(),
         "__currentSystem" : new Value("x86_64-darwin", null),
         "__currentTime" : new Value(time(null)),
-        "__deepSeq" : new Value(&notImplemented),
-        "derivation" : new Value(&notImplemented), //lambda
-        "derivationStrict" : new Value(&notImplemented),
+        "__deepSeq" : wrap!deepSeq(),
+        "derivation" : ni, //lambda
+        "derivationStrict" : ni,
         "dirOf" : wrap!dirOf(),
         "__div" : wrap!(binOp!"/")(),
-        "__elem" : new Value(&notImplemented),
+        "__elem" : ni,
         "__elemAt" : wrap!elemAt(),
         "false" : new Value(false),
-        "fetchGit" : new Value(&notImplemented),
-        "fetchMercurial" : new Value(&notImplemented),
-        "fetchTarball" : new Value(&notImplemented),
-        "__fetchurl" : new Value(&notImplemented),
-        "__filter" : new Value(&notImplemented),
-        "__filterSource" : new Value(&notImplemented),
-        "__findFile" : new Value(&notImplemented),
+        "fetchGit" : ni,
+        "fetchMercurial" : ni,
+        "fetchTarball" : ni,
+        "__fetchurl" : ni,
+        "__filter" : ni,
+        "__filterSource" : ni,
+        "__findFile" : ni,
         "__foldl'" : wrap!foldl_(),
-        "__fromJSON" : new Value(&notImplemented),
-        "fromTOML" : new Value(&notImplemented),
-        "__functionArgs" : new Value(&notImplemented),
+        "__fromJSON" : ni,
+        "fromTOML" : ni,
+        "__functionArgs" : ni,
         "__genList" : wrap!genList(),
         "__genericClosure" : wrap!genericClosure(),
         "__getAttr" : wrap!getAttr(),
-        "__getContext" : new Value(&notImplemented),
-        "__getEnv" : new Value(&notImplemented),
+        "__getContext" : ni,
+        "__getEnv" : ni,
         "__hasAttr" : wrap!hasAttr(),
-        "__hasContext" : new Value(&notImplemented),
-        "__hashFile" : new Value(&notImplemented),
-        "__hashString" : new Value(&notImplemented),
+        "__hasContext" : ni,
+        "__hashFile" : ni,
+        "__hashString" : ni,
         "__head" : wrap!head(),
         "import" : wrap!import_(),
-        "__intersectAttrs" : new Value(&notImplemented),
-        "__isAttrs" : new Value(&notImplemented),
-        "__isBool" : new Value(&notImplemented),
-        "__isFloat" : new Value(&notImplemented),
-        "__isFunction" : new Value(&notImplemented),
-        "__isInt" : new Value(&notImplemented),
-        "__isList" : new Value(&notImplemented),
+        "__intersectAttrs" : ni,
+        "__isAttrs" : ni,
+        "__isBool" : ni,
+        "__isFloat" : ni,
+        "__isFunction" : ni,
+        "__isInt" : ni,
+        "__isList" : ni,
         "isNull" : wrap!isNull(),
-        "__isPath" : new Value(&notImplemented),
-        "__isString" : new Value(&notImplemented),
+        "__isPath" : ni,
+        "__isString" : ni,
         "__langVersion" : new Value(5),
         "__length" : wrap!length_(),
         "__lessThan" : wrap!lessThan(),
-        "__listToAttrs" : new Value(&notImplemented),
+        "__listToAttrs" : ni,
         "map" : wrap!map(),
-        "__mapAttrs" : new Value(&notImplemented),
-        "__match" : new Value(&notImplemented),
+        "__mapAttrs" : ni,
+        "__match" : ni,
         "__mul" : wrap!(binOp!"*")(),
         "__nixPath" : new Value(cast(Value*[])[]),
         "__nixVersion" : new Value("2.3.4", null), //FIXME
         "null" : new Value(),
-        "__parseDrvName" : new Value(&notImplemented),
-        "__partition" : new Value(&notImplemented),
-        "__path" : new Value(&notImplemented),
-        "__pathExists" : new Value(&notImplemented),
-        "placeholder" : new Value(&notImplemented),
-        "__readDir" : new Value(&notImplemented),
-        "__readFile" : new Value(&notImplemented),
-        "removeAttrs" : new Value(&notImplemented),
-        "__replaceStrings" : new Value(&notImplemented),
-        "scopedImport" : new Value(&notImplemented),
-        "__seq" : new Value(&notImplemented),
-        "__sort" : new Value(&notImplemented),
-        "__split" : new Value(&notImplemented),
-        "__splitVersion" : new Value(&notImplemented),
+        "__parseDrvName" : ni,
+        "__partition" : ni,
+        "__path" : ni,
+        "__pathExists" : ni,
+        "placeholder" : ni,
+        "__readDir" : ni,
+        "__readFile" : ni,
+        "removeAttrs" : ni,
+        "__replaceStrings" : ni,
+        "scopedImport" : ni,
+        "__seq" : wrap!seq(),
+        "__sort" : ni,
+        "__split" : ni,
+        "__splitVersion" : ni,
         "__storeDir" : new Value("/nix/store"),
-        "__storePath" : new Value(&notImplemented),
-        "__stringLength" : new Value(&notImplemented),
+        "__storePath" : ni,
+        "__stringLength" : ni,
         "__sub" : wrap!(binOp!"-")(),
         "__substring" : wrap!substring(),
         "__tail" : wrap!tail(),
         "throw" : wrap!(throw_)(),
-        "__toFile" : new Value(&notImplemented),
-        "__toJSON" : new Value(&notImplemented),
-        "__toPath" : new Value(&notImplemented),
+        "__toFile" : ni,
+        "__toJSON" : ni,
+        "__toPath" : ni,
         "toString" : wrap!(toString)(),
-        "__toXML" : new Value(&notImplemented),
-        "__trace" : new Value(&notImplemented),
+        "__toXML" : ni,
+        "__trace" : ni,
         "true" : new Value(true),
-        "__tryEval" : new Value(&notImplemented),
+        "__tryEval" : ni,
         "__typeOf" : wrap!typeOf_(),
-        "__unsafeDiscardOutputDependency" : new Value(&notImplemented),
+        "__unsafeDiscardOutputDependency" : ni,
         "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext(),
-        "__unsafeGetAttrPos" : new Value(&notImplemented),
+        "__unsafeGetAttrPos" : ni,
     ];
 
     Bindings builtins;

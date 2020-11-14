@@ -3,7 +3,23 @@ module nix.value;
 public import nix.parser;
 
 debug import std.stdio : writeln;
-import std.conv : to;
+import std.conv : text;
+
+class TypeException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
+string canonPath(string path) pure @safe {
+    assert(path != "");
+    if (path[0] != '/') {
+        throw new Exception("not an absolute path: "~path);
+    }
+    // TODO: handle links
+    import std.path : asNormalizedPath;
+    return asNormalizedPath(path).array;
+}
 
 // alias LazyValue = Value delegate(); // TODO: use this instead of thunk
 
@@ -138,6 +154,7 @@ struct Value {
         assert(path != "", "Path should not be empty");
         assert(path[0] == '/', "Path should be absolute: "~path);
         assert(path == "/" || path[$-1] != '/', "Path has trailing slash: "~path);
+        assert(path != "/.");
         this.type = Type.Path;
         this.s = path;
     }
@@ -207,54 +224,59 @@ struct Value {
         return type == Type.Null;
     }
 
-    @property string str() pure const nothrow {
-        assert(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
+    @property bool isNumber() pure const nothrow {
+        assert(type != Type.Thunk, "Must force value first");
+        return type == Type.Float || type == Type.Int;
+    }
+
+    @property string str() pure const {
+        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
         return s;
     }
 
-    @property NixInt integer() pure const nothrow {
-        assert(type == Type.Int, "value is "~typeOf(this)~" while an integer was expected");
+    @property NixInt integer() pure const {
+        enforce!TypeException(type == Type.Int, "value is "~typeOf(this)~" while an integer was expected");
         return i;
     }
 
-    @property NixFloat fpoint() pure const nothrow {
-        assert(type == Type.Float, "value is "~typeOf(this)~" while a float was expected");
+    @property NixFloat fpoint() pure const {
+        enforce!TypeException(type == Type.Float, "value is "~typeOf(this)~" while a float was expected");
         return f;
     }
 
-    @property string path() pure const nothrow {
-        assert(type == Type.Path, "value is "~typeOf(this)~" while a path was expected");
+    @property string path() pure const {
+        enforce!TypeException(type == Type.Path, "value is "~typeOf(this)~" while a path was expected");
         return s;
     }
 
-    @property Bindings attrs() pure nothrow {
-        assert(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
+    @property Bindings attrs() pure {
+        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
         return a;
     }
 
-    @property const(Bindings) attrs() pure nothrow const {
-        assert(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
+    @property const(Bindings) attrs() pure const {
+        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
         return a;
     }
 
-    @property bool boolean() pure const nothrow {
-        assert(type == Type.Bool, "value is "~typeOf(this)~" while a boolean was expected");
+    @property bool boolean() pure const {
+        enforce!TypeException(type == Type.Bool, "value is "~typeOf(this)~" while a boolean was expected");
         return b;
     }
 
-    @property Value*[] list() pure nothrow {
-        assert(type == Type.List, "value is "~typeOf(this)~" while a list was expected");
+    @property Value*[] list() pure {
+        enforce!TypeException(type == Type.List, "value is "~typeOf(this)~" while a list was expected");
         return l;
     }
 
-    @property Value*[] app() pure nothrow {
-        assert(type == Type.App, "value is "~typeOf(this)~" while a function application was expected");
+    @property Value*[] app() pure {
+        enforce!TypeException(type == Type.App, "value is "~typeOf(this)~" while a function application was expected");
         assert(l.length == 2);
         return l;
     }
 
-    @property const(Expr) thunk() pure nothrow {
-        assert(type == Type.Thunk, "value is "~typeOf(this)~" while a thunk was expected");
+    @property const(Expr) thunk() pure {
+        enforce!TypeException(type == Type.Thunk, "value is "~typeOf(this)~" while a thunk was expected");
         return t;
     }
 
@@ -267,29 +289,29 @@ struct Value {
         return e;
     }
 
-    @property const(ExprLambda) lambda() pure nothrow {
-        assert(type == Type.Lambda, "value is "~typeOf(this)~" while a lambda was expected");
+    @property const(ExprLambda) lambda() pure {
+        enforce!TypeException(type == Type.Lambda, "value is "~typeOf(this)~" while a lambda was expected");
         return el;
     }
 
-    @property PrimOp primOp() pure const nothrow {
+    @property PrimOp primOp() pure const {
         if (type == Type.PrimOpApp) return l[0].primOp;
-        assert(type == Type.PrimOp, "value is "~typeOf(this)~" while a function was expected");
+        enforce!TypeException(type == Type.PrimOp, "value is "~typeOf(this)~" while a function was expected");
         return op;
     }
 
-    @property Value*[] primOpArgs() pure nothrow {
-        assert(type == Type.PrimOpApp, "value is "~typeOf(this)~" while a function application was expected");
+    @property Value*[] primOpArgs() pure {
+        enforce!TypeException(type == Type.PrimOpApp, "value is "~typeOf(this)~" while a function application was expected");
         return l[1..$];
     }
 
-    @property PathSet context() pure const nothrow {
+    @property PathSet context() pure const {
         if (type == Type.Path) return [s:true];
-        assert(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
+        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
         return null; // TODO
     }
 
-    // @property ref Value deref() pure nothrow {
+    // @property ref Value deref() pure {
     //     return type == Type.Ref ? r.deref : this;
     // }
 
@@ -325,15 +347,12 @@ struct Value {
             break;
         case Type.Path:
             static if (OP == "+") {
-            assert(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
-            const lhs = this.s == "/." ? "/" : this.s;
-            // FIXME: canonicalize
-            import std.path : asNormalizedPath;
-            return Value(asNormalizedPath(lhs ~ rhs.s).array);
+            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
+            return Value(canonPath(this.s ~ rhs.s));
             }
         case Type.String:
             static if (OP == "+") {
-            assert(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
+            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
             PathSet ps = this.context().dup;
             foreach (k, v; rhs.context()) ps[k] = v;
             return Value(this.s ~ rhs.s, ps);
@@ -421,7 +440,7 @@ struct Value {
             import nix.printer : escapeString;
             return escapeString(s);
         case Type.Int:
-            return to!string(i);
+            return text(i);
         case Type.Float:
         version (PURE) {
             import std.format : printFloat, singleSpec;
@@ -430,7 +449,7 @@ struct Value {
             char[32] buf;
             return printFloat(buf[], f, fs).strip("e+0").idup;
         } else {
-            return to!string(f);
+            return text(f);
         }
         case Type.Bool:
             return b ? "true" : "false";
@@ -530,7 +549,7 @@ unittest {
     assert(Value("/a") + Value("/b") == Value("/a/b"));
     assert(Value("/a") + Value("str", null) == Value("/astr"));
     // assert(Value("a", null) + Value("/b") == Value("a/nix/store/asdf-b", null)); TODO
-    assert(Value("/.") + Value("str/", null) == Value("/str"));
+    assert(Value("/") + Value("str/", null) == Value("/str"));
 
     assert(Value(3) < Value(12));
     assert(Value(1.0) < Value(2));
