@@ -47,8 +47,8 @@ alias PrimOp = Value function(Value*[] args...) /*pure*/;
 struct Env {
     Env* up;
     Bindings vars;
-    Value[const(Expr)] cache;
-    // const(ExprWith) hasWith;
+    const(Expr) hasWith;
+    debug Value[const(Expr)] cache;//temp
 }
 
 enum Type : byte {

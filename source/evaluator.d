@@ -13,7 +13,13 @@ class EvalException : Exception {
 
 class AssertionException : EvalException {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
-        super(msg, file, line);
+        super("assertion "~msg~" failed", file, line);
+    }
+}
+
+class UndefinedVarException : EvalException {
+    this(string name, string file = __FILE__, size_t line = __LINE__) pure {
+        super("undefined variable "~name, file, line);
     }
 }
 
@@ -220,7 +226,6 @@ private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprSt
 
     Value* lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
             auto v = name in curEnv.vars;
             if (v)
                 return *v;
@@ -441,12 +446,14 @@ class Evaluator : ConstVisitors {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // if (!curEnv.vars) continue;
             // debug writeln("lookupVarx ", name, curEnv.vars);
-            // if (curEnv.hasWith) visit(curEnv.hasWith.attrs)
+            if (curEnv.hasWith && !curEnv.vars) {
+                curEnv.vars = eval(curEnv.hasWith, *curEnv.up).attrs;
+            }
             auto v = name in curEnv.vars;
             if (v)
                 return **v;
         }
-        throw new Exception("undefined variable "~name);
+        throw new UndefinedVarException(name);
     }
 
     void visit(in ExprInt expr) {
@@ -596,8 +603,7 @@ class Evaluator : ConstVisitors {
 
     void visit(in ExprWith expr) {
         // debug writeln(expr.attrs);
-        auto att = visit(expr.attrs);// TODO: make lazy
-        auto newEnv = new Env(env, att.attrs);
+        auto newEnv = new Env(env, null, expr.attrs);
         env = newEnv;
         visit(expr.body);
         env = newEnv.up;
@@ -612,14 +618,14 @@ class Evaluator : ConstVisitors {
 
     void visit(in ExprAssert expr) {
         import nix.printer : format;
-        enforce!AssertionException(visit(expr.cond).boolean, "assertion "~format(expr.cond).idup~" failed");
+        enforce!AssertionException(visit(expr.cond).boolean, format(expr.cond).idup);
         visit(expr.body);
     }
 }
 
 public ref Value eval(in Expr expr, ref Env env = staticBaseEnv) /*pure*/ {
     assert(expr);
-    if (auto v = expr in env.cache) {
+    debug if (auto v = expr in env.cache) {
         assert(0);
         //return *v;
     }

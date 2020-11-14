@@ -229,6 +229,20 @@ private Value deepSeq(ref Value a, ref Value b) {
     return forceValue(b);
 }
 
+private Value derivation(ref Value attrs) {
+    auto drvAttrs = forceValue(attrs).attrs.dup;
+    const name = forceValue(*drvAttrs["name"]).str;
+    auto drv = new Value(drvAttrs);
+    drvAttrs["all"] = new Value([drv]);
+    drvAttrs["drvAttrs"] = new Value(drvAttrs);
+    drvAttrs["drvPath"] = new Value("/nix/store/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv", null);
+    drvAttrs["out"] = drv;
+    drvAttrs["outPath"] = new Value("/nix/store/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, null);
+    drvAttrs["outputName"] = new Value("out", null);
+    drvAttrs["type"] = new Value("derivation", null);
+    return *drv;
+}
+
 private Value* wrap(alias F)() {
     import std.traits : arity;
     static Value primop(Value*[] args...) {
@@ -273,7 +287,7 @@ static this() {
         "__currentSystem" : new Value("x86_64-darwin", null),
         "__currentTime" : new Value(time(null)),
         "__deepSeq" : wrap!deepSeq(),
-        "derivation" : ni, //lambda
+        "derivation" : wrap!derivation(), //lambda
         "derivationStrict" : ni,
         "dirOf" : wrap!dirOf(),
         "__div" : wrap!(binOp!"/")(),
