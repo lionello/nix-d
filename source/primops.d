@@ -16,6 +16,17 @@ class ThrownException : AssertionException {
     }
 }
 
+private Value functionArgs(ref Value func) {
+    Bindings args;
+    const formals = forceValue(func).lambda.formals;
+    if (formals) {
+        foreach(f; formals.elems) {
+            args[f.name] = new Value(f.def !is null);
+        }
+    }
+    return Value(args);
+}
+
 private Value genList(ref Value func, ref Value count) {
     const length = forceValue(count).integer;
     Value*[] list;
@@ -54,6 +65,21 @@ private Value isNull(ref Value arg) /*pure*/ {
     return Value(forceValue(arg).isNull);
 }
 
+private Value isFunction(ref Value arg) /*pure*/ {
+    switch (forceValue(arg).type) {
+    case Type.Lambda:
+    case Type.PrimOp:
+    case Type.PrimOpApp:
+        return Value(true);
+    default:
+        return Value(false);
+    }
+}
+
+private Value isList(ref Value arg) /*pure*/ {
+    return Value(forceValue(arg).type == Type.List);
+}
+
 private Value lessThan(ref Value lhs, ref Value rhs) /*pure*/ {
     return Value(forceValue(lhs) < forceValue(rhs));
 }
@@ -64,6 +90,49 @@ private Value toString(ref Value arg) /*pure*/ {
 
 private Value throw_(ref Value msg) /*pure*/ {
     throw new ThrownException(coerceToString(msg));
+}
+
+private Value toJSON(ref Value v) {
+    static string convJSON(ref Value v) {
+        import nix.printer : escapeString;
+        forceValue(v);
+        final switch (v.type) {
+        case Type.Path:
+            return escapeString(v.toString());
+        case Type.Null:
+        case Type.String:
+        case Type.Int:
+        case Type.Float:
+        case Type.Bool:
+            return v.toString();
+        case Type.List:
+            string s = "[";
+            foreach (i, e; v.list) {
+                if (i) s ~= ',';
+                s ~= convJSON(*e);
+            }
+            return s ~ "]";
+        case Type.Attrs:
+            auto s = tryAttrsToString(v, false);
+            if (s !is null) return escapeString(s);
+            s = "{";
+            bool first = true;
+            // TODO: sort by key
+            foreach (k, e; v.attrs) {
+                if (!first) s ~= ',';
+                first = false;
+                s ~= escapeString(k)~":"~convJSON(*e);
+            }
+            return s ~ '}';
+        case Type.App:
+        case Type.PrimOp:
+        case Type.PrimOpApp:
+        case Type.Lambda:
+        case Type.Thunk:
+            throw new TypeException("cannot convert to JSON: "~v.typeOf);
+        }
+    }
+    return Value(convJSON(v), null);
 }
 
 private Value abort(ref Value msg) /*pure*/ {
@@ -97,6 +166,45 @@ private Value foldl_(ref Value func, ref Value v, ref Value list) {
         acc = callFunction(partial, *e, Loc());
     }
     return acc;
+}
+
+private Value fromJSON(ref Value str) {
+    import std.json : parseJSON, JSONValue, JSONType;
+    static Value* convJSON(JSONValue v) {
+        final switch (v.type) {
+        case JSONType.null_:    return new Value();
+        case JSONType.string:   return new Value(v.str, null);
+        case JSONType.integer:  return new Value(v.integer);
+        case JSONType.uinteger: return new Value(v.uinteger);
+        case JSONType.float_:   return new Value(v.floating);
+        case JSONType.array:
+            Value*[] output;
+            foreach (ref e; v.array) {
+                output ~= convJSON(e);
+            }
+            return new Value(output);
+        case JSONType.object:
+            Bindings output;
+            foreach (k, e; v.object) {
+                output[k] = convJSON(e);
+            }
+            return new Value(output);
+        case JSONType.true_:    return new Value(true);
+        case JSONType.false_:   return new Value(false);
+        }
+    }
+    return *convJSON(parseJSON(forceValue(str).str));
+}
+
+private Value intersectAttrs(ref Value e1, ref Value e2) {
+    forceValue(e1);
+    forceValue(e2);
+    Bindings set;
+    foreach (k, v; e1.attrs) {
+        auto j = k in e2.attrs;
+        if (j) set[k] = *j;
+    }
+    return Value(set);
 }
 
 private Value import_(ref Value filename) /*pure*/ {
@@ -327,9 +435,9 @@ static this() {
         "__filterSource" : ni,
         "__findFile" : ni,
         "__foldl'" : wrap!foldl_(),
-        "__fromJSON" : ni,
+        "__fromJSON" : wrap!fromJSON(),
         "fromTOML" : ni,
-        "__functionArgs" : ni,
+        "__functionArgs" : wrap!functionArgs(),
         "__genList" : wrap!genList(),
         "__genericClosure" : wrap!genericClosure(),
         "__getAttr" : wrap!getAttr(),
@@ -341,13 +449,13 @@ static this() {
         "__hashString" : ni,
         "__head" : wrap!head(),
         "import" : wrap!import_(),
-        "__intersectAttrs" : ni,
+        "__intersectAttrs" : wrap!intersectAttrs(),
         "__isAttrs" : ni,
         "__isBool" : ni,
         "__isFloat" : ni,
-        "__isFunction" : ni,
+        "__isFunction" : wrap!isFunction(),
         "__isInt" : ni,
-        "__isList" : ni,
+        "__isList" : wrap!isList(),
         "isNull" : wrap!isNull(),
         "__isPath" : ni,
         "__isString" : ni,
@@ -384,7 +492,7 @@ static this() {
         "__tail" : wrap!tail(),
         "throw" : wrap!(throw_)(),
         "__toFile" : ni,
-        "__toJSON" : ni,
+        "__toJSON" : wrap!toJSON(),
         "__toPath" : ni,
         "toString" : wrap!(toString)(),
         "__toXML" : ni,

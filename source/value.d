@@ -145,6 +145,7 @@ struct Value {
     // }
 
     this(string str, PathSet context) pure {
+        assert(str !is null);
         this.type = Type.String;
         this.s = str;
         // this.c = context;

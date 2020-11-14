@@ -59,7 +59,7 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
             foreach (formal; f.lambda.formals.elems) {
                 auto j = formal.name in attrs;
                 if (!j) {
-                    assert(formal.def, "Lambda called without required argument "~formal.name);
+                    enforce!TypeException(formal.def, "Lambda called without required argument "~formal.name);
                     env2.vars[formal.name] = maybeThunk(formal.def, env2).dup;
                 } else {
                     attrsUsed++;
@@ -68,13 +68,13 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
             }
             if (!f.lambda.formals.ellipsis && attrsUsed != attrs.length) {
                 foreach (const k, ref v; attrs)
-                    assert(0, "Lambda called with unexpected argument "~k);
+                    throw new TypeException("Lambda called with unexpected argument "~k);
                 assert(0);
             }
         }
         return eval(f.lambda.body, *env2);
     default:
-        assert(0, "attempt to call something which is not a function");
+        throw new TypeException("attempt to call something which is not a function");
     }
 }
 
@@ -140,6 +140,13 @@ unittest {
     assert(5 == eval(new ExprBinaryOp(L, Tok.APP, new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2)), new ExprInt(L, 3))).integer);
 }
 
+string tryAttrsToString(ref Value value, bool coerceMore) {
+    auto toString = "__toString" in value.attrs;
+    if (!toString) return null;
+    auto str = callFunction(**toString, value, Loc());
+    return coerceToString(str, coerceMore);
+}
+
 string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
     forceValue(value);
     switch (value.type) {
@@ -150,12 +157,8 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
         // TODO: by default this would copy to store
         return canonPath(value.path);
     case Type.Attrs:
-        auto toString = "__toString" in value.attrs;
-        if (toString) {
-            auto str = callFunction(**toString, value, Loc());
-            auto s = coerceToString(str, coerceMore);
-            if (s) return s;
-        }
+        auto s = tryAttrsToString(value, coerceMore);
+        if (s !is null) return s;
         auto outPath = "outPath" in value.attrs;
         if (outPath) {
             return coerceToString(**outPath, coerceMore);
@@ -192,7 +195,7 @@ unittest {
 
 string coerceToPath(ref Value v) {
     const path = coerceToString(v, false);
-    if (path == "" || path[0] != '/') throw new Exception("string "~path~" doesn't represent an absolute path");
+    enforce!EvalException(path != "" && path[0] == '/', "string "~path~" doesn't represent an absolute path");
     return path;
 }
 
@@ -324,7 +327,6 @@ class Evaluator : ConstVisitors {
     }
 
     private ref Value visit(in Expr expr) {
-        assert(expr);
         expr.accept(this);
         return *value;
     }
@@ -446,10 +448,11 @@ class Evaluator : ConstVisitors {
                 visit(expr.right);
             else
                 value = new Value(true);
-            assert(value.type == Type.Bool, "a boolean was expected");
+            enforce!TypeException(value.type == Type.Bool, "a boolean was expected");
             break;
         case Tok.APP:
             auto lhs = visit(expr.left);
+            // TODO: detect tail recursion
             value = callFunction(lhs, maybeThunk(expr.right, env), expr.loc).dup;
             break;
         default:
@@ -459,7 +462,6 @@ class Evaluator : ConstVisitors {
 
     ref Value lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            // if (!curEnv.vars) continue;
             // debug writeln("lookupVarx ", name, curEnv.vars);
             if (curEnv.hasWith && !curEnv.vars) {
                 curEnv.vars = eval(curEnv.hasWith, *curEnv.up).attrs;
@@ -502,8 +504,8 @@ class Evaluator : ConstVisitors {
     void visit(in ExprSelect expr) {
         visit(expr.left);
         foreach (a; expr.ap) {
-            forceValue(*value, expr.loc);
             const name = getName(a);
+            forceValue(*value, expr.loc);
             if (value.type == Type.Attrs) {
                 auto j = name in value.attrs;
                 if (j) {
@@ -515,7 +517,9 @@ class Evaluator : ConstVisitors {
                 visit(expr.def);
                 break;
             }
-            throw new Exception("attribute missing: " ~ name);
+            import nix.printer:format;
+            debug writeln(format(expr), expr.ap, *value);
+            throw new EvalException("attribute missing: " ~ name);
         }
         forceValue(*value, Loc()); // TODO: use pos from attr 'j'
     }
@@ -588,7 +592,7 @@ class Evaluator : ConstVisitors {
                 continue;
             }
             const nameSym = nameVal.str;
-            assert(nameSym !in attrs, "dynamic attribute already defined");
+            enforce!EvalException(nameSym !in attrs, "dynamic attribute already defined: "~nameSym);
             attrs[nameSym] = maybeThunk(attr.value, dynamicEnv).dup;
         }
         value = new Value(attrs);
