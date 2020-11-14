@@ -82,6 +82,14 @@ private Value head(ref Value list) /*pure*/ {
     return elemAt(list, 0);
 }
 
+private Value elem(ref Value val, ref Value list) /*pure*/ {
+    forceValue(val);
+    foreach (e; forceValue(list).list) {
+        if (eqValues(*e, val)) return Value(true);
+    }
+    return Value(false);
+}
+
 private Value foldl_(ref Value func, ref Value v, ref Value list) {
     Value acc = v;
     foreach (e; forceValue(list).list) {
@@ -291,7 +299,7 @@ static this() {
         "derivationStrict" : ni,
         "dirOf" : wrap!dirOf(),
         "__div" : wrap!(binOp!"/")(),
-        "__elem" : ni,
+        "__elem" : wrap!elem(),
         "__elemAt" : wrap!elemAt(),
         "false" : new Value(false),
         "fetchGit" : ni,

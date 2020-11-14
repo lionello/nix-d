@@ -280,7 +280,13 @@ unittest {
     assert(thunker.value.thunk);
 }
 
-private bool eqValues(ref Value lhs, ref Value rhs) {
+bool isDerivation(ref Value v) {
+    if (v.type != Type.Attrs) return false;
+    auto type = "type" in v.attrs;
+    return type && forceValue(**type).type == Type.String && (*type).str == "derivation";
+}
+
+bool eqValues(ref Value lhs, ref Value rhs) {
     auto l = forceValue(lhs);
     auto r = forceValue(rhs);
 
@@ -290,9 +296,18 @@ private bool eqValues(ref Value lhs, ref Value rhs) {
             if (!eqValues(*v, *r.list[i])) return false;
         }
         return true;
-    // } else if (l.type == Type.Attrs && r.type == Type.Attrs) {
-    //     if (l.attrs.length != r.attrs.length) return false;
-    //     TODO
+    } else if (l.type == Type.Attrs && r.type == Type.Attrs) {
+        /* If both sets denote a derivation (type = "derivation"),
+               then compare their outPaths. */
+        if (l.isDerivation && r.isDerivation) {
+            return eqValues(*l.attrs["outPath"], *r.attrs["outPath"]);
+        }
+        if (l.attrs.length != r.attrs.length) return false;
+        foreach (k, p; l.attrs) {
+            auto pp = k in r.attrs;
+            if (pp is null || !eqValues(*p, **pp)) return false;
+        }
+        return true;
     } else {
         // Fallback to opEquals
         return l == r;
