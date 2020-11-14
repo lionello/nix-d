@@ -480,7 +480,7 @@ class Evaluator : ConstVisitors {
         if (an.ident) {
             return an.ident;
         } else {
-            return forceValue(visit(an.expr)).str;
+            return forceValue(eval(an.expr, *env)).str;
         }
     }
 

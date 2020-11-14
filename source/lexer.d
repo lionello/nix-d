@@ -15,7 +15,9 @@ class ParseException : Exception {
 }
 
 void enforce(E = ParseException, T)(in T test, lazy string msg, string file = __FILE__, size_t line = __LINE__) pure {
-    if (!test) throw new E(msg, file, line);
+    if (!test) {
+        throw new E(msg, file, line);
+    }
 }
 
 /// Lexical tokens
