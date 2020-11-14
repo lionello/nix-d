@@ -251,6 +251,23 @@ private Value derivation(ref Value attrs) {
     return *drv;
 }
 
+private Value concatLists(ref Value lists) {
+    Value*[] output;
+    foreach (list; forceValue(lists).list) {
+        output ~= forceValue(*list).list;
+    }
+    return Value(output);
+}
+
+private Value filter(ref Value fun, ref Value list) {
+    Value*[] output;
+    foreach (e; forceValue(list).list) {
+        if (callFunction(fun, forceValue(*e), Loc()).boolean)
+            output ~= e;
+    }
+    return Value(output);
+}
+
 private Value* wrap(alias F)() {
     import std.traits : arity;
     static Value primop(Value*[] args...) {
@@ -289,7 +306,7 @@ static this() {
         "__bitXor" :  wrap!(binOp!"^")(),
         "__catAttrs" : wrap!catAttrs(),
         "__compareVersions" : ni,
-        "__concatLists" : ni,
+        "__concatLists" : wrap!concatLists(),
         "__concatMap" : wrap!concatMap(),
         "__concatStringsSep" : wrap!concatStringsSep(),
         "__currentSystem" : new Value("x86_64-darwin", null),
@@ -306,7 +323,7 @@ static this() {
         "fetchMercurial" : ni,
         "fetchTarball" : ni,
         "__fetchurl" : ni,
-        "__filter" : ni,
+        "__filter" : wrap!filter(),
         "__filterSource" : ni,
         "__findFile" : ni,
         "__foldl'" : wrap!foldl_(),
