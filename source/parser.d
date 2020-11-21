@@ -388,8 +388,9 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 input.popFront(); // eat the )
                 const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
-                    assert(ap.ident);
-                    assert(ap.ident !in binds.attrs);
+                    enforce(ap.ident, "dynamic attributes not allowed in inherit");
+                    enforce(ap.ident !in binds.attrs, "attribute already defined");
+                    // FIXME: use loc from AttrPath
                     binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprSelect(loc,
                             expr, [
                                 ap
@@ -398,8 +399,9 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
             } else {
                 const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
-                    assert(ap.ident);
-                    assert(ap.ident !in binds.attrs);
+                    enforce(ap.ident, "dynamic attributes not allowed in inherit");
+                    enforce(ap.ident !in binds.attrs, "attribute already defined");
+                    // FIXME: use loc from AttrPath
                     binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprVar(loc, ap.ident), true);
                 }
             }
@@ -996,10 +998,12 @@ private AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
         assert(input.front.tok == Tok.RIGHT_CURLY);
         input.popFront(); // eat the }
         return AttrName(expr);
-    case Tok.STRING: // FIXME: could contain ${}
+    case Tok.STRING: // could contain ${}
         auto tokens = parseString(input.front.s);
         input.popFront();
-        return AttrName(parseStr(tokens));
+        auto expr = parseStr(tokens);
+        auto string_expr = cast(ExprString) expr;
+        return string_expr ? AttrName(string_expr.s) : AttrName(expr);
     case Tok.OR_KW:
     case Tok.IDENTIFIER:
         auto id = input.front.s;
