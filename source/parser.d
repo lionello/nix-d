@@ -384,7 +384,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
             if (input.front.tok == Tok.LEFT_PARENS) {
                 input.popFront(); // eat the (
                 auto expr = parseExpression(input);
-                assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
+                enforce(input.front.tok == Tok.RIGHT_PARENS, "syntax error, unexpected '"~input.front.s~"', expecting ')'");
                 input.popFront(); // eat the )
                 const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
@@ -588,7 +588,7 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
             auto expr = parseExpression(input);
             if (expr) es ~= expr;
             debug(PARSER) writeln(format(expr));
-            enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected "~text(input.front.tok)~", expected }");
+            enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected "~input.front.s~", expecting '}'");
             input.popFront(); // eat the }
             break;
         default:

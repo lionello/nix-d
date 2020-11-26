@@ -8,11 +8,12 @@ import nix.parser : parse;
 import nix.printer;
 
 void main(string[] args) {
-    import std.file : readText;
+    import std.file : readText, exists;
     import std.string : replace;
     import std.string : strip;
 
     foreach (filename; args[1 .. $]) {
+        if (exists(filename.replace(".nix", ".exp-disabled"))) continue;
         writeln(filename);
         auto s = readText(filename);
         auto tr = TokenRange!string(s);
@@ -35,8 +36,7 @@ void main(string[] args) {
             writeln(value.toString(10));
         }
         catch (Throwable e) {
-            writeln("Failed: ", filename);
-            writeln(e);
+            writeln("Failed: ", e.message);
         }
         // Compare with exp
         // const exp = readText(filename.replace(".nix", ".exp")).strip();

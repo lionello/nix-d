@@ -57,12 +57,33 @@ private Value binOp(string OP)(ref Value lhs, ref Value rhs) /*pure*/ {
     return forceValue(lhs).opBinary!OP(forceValue(rhs));
 }
 
+private Value tryEval(ref Value expr) {
+    Bindings result;
+    try {
+        result["value"] = &forceValue(expr);
+        result["success"] = new Value(true);
+    }
+    catch(AssertionException e) {
+        result["value"] = new Value(false);
+        result["success"] = new Value(false);
+    }
+    return Value(result);
+}
+
 private Value typeOf_(ref Value arg) /*pure*/ {
     return Value(forceValue(arg).typeOf, null);
 }
 
-private Value isNull(ref Value arg) /*pure*/ {
-    return Value(forceValue(arg).isNull);
+private Value isAttrs(ref Value arg) {
+    return Value(forceValue(arg).type == Type.Attrs);
+}
+
+private Value isBool(ref Value arg) {
+    return Value(forceValue(arg).type == Type.Bool);
+}
+
+private Value isFloat(ref Value arg) {
+    return Value(forceValue(arg).type == Type.Float);
 }
 
 private Value isFunction(ref Value arg) /*pure*/ {
@@ -76,8 +97,24 @@ private Value isFunction(ref Value arg) /*pure*/ {
     }
 }
 
+private Value isInt(ref Value arg) {
+    return Value(forceValue(arg).type == Type.Int);
+}
+
 private Value isList(ref Value arg) /*pure*/ {
     return Value(forceValue(arg).type == Type.List);
+}
+
+private Value isNull(ref Value arg) /*pure*/ {
+    return Value(forceValue(arg).isNull);
+}
+
+private Value isPath(ref Value arg) {
+    return Value(forceValue(arg).type == Type.Path);
+}
+
+private Value isString(ref Value arg) {
+    return Value(forceValue(arg).type == Type.String);
 }
 
 private Value lessThan(ref Value lhs, ref Value rhs) /*pure*/ {
@@ -286,7 +323,6 @@ private Value genericClosure(ref Value attr) {
         auto e = forceValue(*startSet[0]);
         startSet = startSet[1..$];
         const key = forceValue(*e.attrs["key"]);
-        debug writeln("key=",key);
         if (key in done) continue;
         done[key] = true;
         assert(key in done);
@@ -326,18 +362,41 @@ private Value unsafeDiscardStringContext(ref Value str) {
     return Value(coerceToString(str), null);
 }
 
+private Value stringLength(ref Value str) {
+    return Value(coerceToString(str).length);
+}
+
 private Value substring(ref Value from, ref Value len, ref Value str) {
     const s = coerceToString(str);
     auto start = forceValue(from).integer;
+    assert(start >= 0);
     auto end = start + forceValue(len).integer;
     if (start >= s.length) start = end = 0;
     else if (end > s.length) end = s.length;
     return Value(s[start..end], str.context);
 }
 
+private Value removeAttrs(ref Value attrs, ref Value list) {
+    auto set = forceValue(attrs).attrs.dup;
+    foreach (v; forceValue(list).list) {
+        set.remove(forceValue(*v).str);
+    }
+    return Value(set);
+}
+
 private Value seq(ref Value a, ref Value b) {
     forceValue(a);
     return forceValue(b);
+}
+
+private Value sort(ref Value fun, ref Value list) {
+    import std.algorithm.mutation : SwapStrategy;
+    import std.algorithm.sorting : sort;
+    bool cmp(Value* a, Value* b) {
+        auto partial = callFunction(fun, *a, Loc());
+        return callFunction(partial, *b, Loc()).boolean;
+    }
+    return Value(sort!(cmp, SwapStrategy.stable)(forceValue(list).list).array);
 }
 
 private Value deepSeq(ref Value a, ref Value b) {
@@ -376,133 +435,134 @@ private Value filter(ref Value fun, ref Value list) {
     return Value(output);
 }
 
-private Value* wrap(alias F)() {
-    import std.traits : arity;
-    static Value primop(Value*[] args...) {
-        if (args.length < arity!F) return Value(&primop, args);
-        assert(args.length == arity!F);
-        static if (arity!F == 0) return F();
-        static if (arity!F == 1) return F(*args[0]);
-        static if (arity!F == 2) return F(*args[0], *args[1]);
-        static if (arity!F == 3) return F(*args[0], *args[1], *args[2]);
-    }
-    return new Value(&primop);
-}
-
 Env staticBaseEnv;
 
 static this() {
     import core.stdc.time : time;
 
-    static Value notImplemented(Value*[] args...) /*pure*/ {
-        assert(0, "not implemented");
+    static Value notImplemented(string S)(Value*[] args...) /*pure*/ {
+        assert(0, "not implemented: "~S);
     }
-    auto ni = new Value(&notImplemented);
+    static auto ni(string S)() {
+        return new Value(&notImplemented!S);
+    }
+    static auto wrap(alias F)() {
+        import std.traits : arity;
+        static Value primop(Value*[] args...) {
+            if (args.length < arity!F) return Value(&primop, args);
+            assert(args.length == arity!F);
+            static if (arity!F == 0) return F();
+            static if (arity!F == 1) return F(*args[0]);
+            static if (arity!F == 2) return F(*args[0], *args[1]);
+            static if (arity!F == 3) return F(*args[0], *args[1], *args[2]);
+        }
+        return new Value(&primop);
+    }
 
     Bindings globals = [
-        "abort" : wrap!abort(),
-        "__add" : wrap!(binOp!"+")(),
-        "__addErrorContext" : ni,
-        "__all" : wrap!all(),
-        "__any" : wrap!any(),
-        "__appendContext" : ni,
-        "__attrNames" : wrap!attrNames(),
-        "__attrValues" : wrap!attrValues(),
-        "baseNameOf" : wrap!baseNameOf(),
-        "__bitAnd" :  wrap!(binOp!"&")(),
-        "__bitOr" :  wrap!(binOp!"|")(),
-        "__bitXor" :  wrap!(binOp!"^")(),
-        "__catAttrs" : wrap!catAttrs(),
-        "__compareVersions" : ni,
-        "__concatLists" : wrap!concatLists(),
-        "__concatMap" : wrap!concatMap(),
-        "__concatStringsSep" : wrap!concatStringsSep(),
+        "abort" : wrap!abort,
+        "__add" : wrap!(binOp!"+"),
+        "__addErrorContext" : ni!"__addErrorContext",
+        "__all" : wrap!all,
+        "__any" : wrap!any,
+        "__appendContext" : ni!"__appendContext",
+        "__attrNames" : wrap!attrNames,
+        "__attrValues" : wrap!attrValues,
+        "baseNameOf" : wrap!baseNameOf,
+        "__bitAnd" :  wrap!(binOp!"&"),
+        "__bitOr" :  wrap!(binOp!"|"),
+        "__bitXor" :  wrap!(binOp!"^"),
+        "__catAttrs" : wrap!catAttrs,
+        "__compareVersions" : ni!"__compareVersions",
+        "__concatLists" : wrap!concatLists,
+        "__concatMap" : wrap!concatMap,
+        "__concatStringsSep" : wrap!concatStringsSep,
         "__currentSystem" : new Value("x86_64-darwin", null),
         "__currentTime" : new Value(time(null)),
-        "__deepSeq" : wrap!deepSeq(),
-        "derivation" : wrap!derivation(), //lambda
-        "derivationStrict" : ni,
-        "dirOf" : wrap!dirOf(),
-        "__div" : wrap!(binOp!"/")(),
-        "__elem" : wrap!elem(),
-        "__elemAt" : wrap!elemAt(),
+        "__deepSeq" : wrap!deepSeq,
+        "derivation" : wrap!derivation, //lambda
+        "derivationStrict" : ni!"derivationStrict",
+        "dirOf" : wrap!dirOf,
+        "__div" : wrap!(binOp!"/"),
+        "__elem" : wrap!elem,
+        "__elemAt" : wrap!elemAt,
         "false" : new Value(false),
-        "fetchGit" : ni,
-        "fetchMercurial" : ni,
-        "fetchTarball" : ni,
-        "__fetchurl" : ni,
-        "__filter" : wrap!filter(),
-        "__filterSource" : ni,
-        "__findFile" : ni,
-        "__foldl'" : wrap!foldl_(),
-        "__fromJSON" : wrap!fromJSON(),
-        "fromTOML" : ni,
-        "__functionArgs" : wrap!functionArgs(),
-        "__genList" : wrap!genList(),
-        "__genericClosure" : wrap!genericClosure(),
-        "__getAttr" : wrap!getAttr(),
-        "__getContext" : ni,
-        "__getEnv" : ni,
-        "__hasAttr" : wrap!hasAttr(),
-        "__hasContext" : ni,
-        "__hashFile" : ni,
-        "__hashString" : ni,
-        "__head" : wrap!head(),
-        "import" : wrap!import_(),
-        "__intersectAttrs" : wrap!intersectAttrs(),
-        "__isAttrs" : ni,
-        "__isBool" : ni,
-        "__isFloat" : ni,
-        "__isFunction" : wrap!isFunction(),
-        "__isInt" : ni,
-        "__isList" : wrap!isList(),
-        "isNull" : wrap!isNull(),
-        "__isPath" : ni,
-        "__isString" : ni,
+        "fetchGit" : ni!"fetchGit",
+        "fetchMercurial" : ni!"fetchMercurial",
+        "fetchTarball" : ni!"fetchTarball",
+        "__fetchurl" : ni!"__fetchurl",
+        "__filter" : wrap!filter,
+        "__filterSource" : ni!"__filterSource",
+        "__findFile" : ni!"__findFile",
+        "__foldl'" : wrap!foldl_,
+        "__fromJSON" : wrap!fromJSON,
+        "fromTOML" : ni!"fromTOML",
+        "__functionArgs" : wrap!functionArgs,
+        "__genList" : wrap!genList,
+        "__genericClosure" : wrap!genericClosure,
+        "__getAttr" : wrap!getAttr,
+        "__getContext" : ni!"__getContext",
+        "__getEnv" : ni!"__getEnv",
+        "__hasAttr" : wrap!hasAttr,
+        "__hasContext" : ni!"__hasContext",
+        "__hashFile" : ni!"__hashFile",
+        "__hashString" : ni!"__hashString",
+        "__head" : wrap!head,
+        "import" : wrap!import_,
+        "__intersectAttrs" : wrap!intersectAttrs,
+        "__isAttrs" : wrap!isAttrs,
+        "__isBool" : wrap!isBool,
+        "__isFloat" : wrap!isFloat,
+        "__isFunction" : wrap!isFunction,
+        "__isInt" : wrap!isInt,
+        "__isList" : wrap!isList,
+        "isNull" : wrap!isNull,
+        "__isPath" : wrap!isPath,
+        "__isString" : wrap!isString,
         "__langVersion" : new Value(5),
-        "__length" : wrap!length_(),
-        "__lessThan" : wrap!lessThan(),
-        "__listToAttrs" : ni,
-        "map" : wrap!map(),
-        "__mapAttrs" : ni,
-        "__match" : ni,
-        "__mul" : wrap!(binOp!"*")(),
+        "__length" : wrap!length_,
+        "__lessThan" : wrap!lessThan,
+        "__listToAttrs" : ni!"__listToAttrs",
+        "map" : wrap!map,
+        "__mapAttrs" : ni!"__mapAttrs",
+        "__match" : ni!"__match",
+        "__mul" : wrap!(binOp!"*"),
         "__nixPath" : new Value(cast(Value*[])[]),
         "__nixVersion" : new Value("2.3.4", null), //FIXME
-        "null" : new Value(),
-        "__parseDrvName" : ni,
-        "__partition" : ni,
-        "__path" : ni,
-        "__pathExists" : ni,
-        "placeholder" : ni,
-        "__readDir" : ni,
-        "__readFile" : ni,
-        "removeAttrs" : ni,
-        "__replaceStrings" : ni,
-        "scopedImport" : ni,
-        "__seq" : wrap!seq(),
-        "__sort" : ni,
-        "__split" : ni,
-        "__splitVersion" : ni,
+        "null" : new Value,
+        "__parseDrvName" : ni!"__parseDrvName",
+        "__partition" : ni!"__partition",
+        "__path" : ni!"__path",
+        "__pathExists" : ni!"__pathExists",
+        "placeholder" : ni!"placeholder",
+        "__readDir" : ni!"__readDir",
+        "__readFile" : ni!"__readFile",
+        "removeAttrs" : wrap!removeAttrs,
+        "__replaceStrings" : ni!"__replaceStrings",
+        "scopedImport" : ni!"scopedImport",
+        "__seq" : wrap!seq,
+        "__sort" : wrap!sort,
+        "__split" : ni!"__split",
+        "__splitVersion" : ni!"__splitVersion",
         "__storeDir" : new Value("/nix/store"),
-        "__storePath" : ni,
-        "__stringLength" : ni,
-        "__sub" : wrap!(binOp!"-")(),
-        "__substring" : wrap!substring(),
-        "__tail" : wrap!tail(),
-        "throw" : wrap!(throw_)(),
-        "__toFile" : ni,
-        "__toJSON" : wrap!toJSON(),
-        "__toPath" : ni,
-        "toString" : wrap!(toString)(),
-        "__toXML" : ni,
-        "__trace" : ni,
+        "__storePath" : ni!"__storePath",
+        "__stringLength" : wrap!stringLength,
+        "__sub" : wrap!(binOp!"-"),
+        "__substring" : wrap!substring,
+        "__tail" : wrap!tail,
+        "throw" : wrap!(throw_),
+        "__toFile" : ni!"__toFile",
+        "__toJSON" : wrap!toJSON,
+        "__toPath" : ni!"__toPath",
+        "toString" : wrap!(toString),
+        "__toXML" : ni!"__toXML",
+        "__trace" : ni!"__trace",
         "true" : new Value(true),
-        "__tryEval" : ni,
-        "__typeOf" : wrap!typeOf_(),
-        "__unsafeDiscardOutputDependency" : ni,
-        "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext(),
-        "__unsafeGetAttrPos" : ni,
+        "__tryEval" : wrap!tryEval,
+        "__typeOf" : wrap!typeOf_,
+        "__unsafeDiscardOutputDependency" : ni!"__unsafeDiscardOutputDependency",
+        "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext,
+        "__unsafeGetAttrPos" : ni!"__unsafeGetAttrPos",
     ];
 
     Bindings builtins;
