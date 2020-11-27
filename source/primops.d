@@ -248,8 +248,6 @@ private Value import_(ref Value filename) /*pure*/ {
     import std.file : readText;
     auto s = readText(coerceToPath(filename));
     auto tr = TokenRange!string(s);
-    // scope (failure)
-    //     writeln(filename, ", error on line ", tr.front.loc.line);
     return eval(parse(tr));
 }
 

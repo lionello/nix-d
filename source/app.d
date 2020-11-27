@@ -17,8 +17,6 @@ void main(string[] args) {
         writeln(filename);
         auto s = readText(filename);
         auto tr = TokenRange!string(s);
-        scope (failure)
-            writeln(filename, ", error on line ", tr.front.loc.line);
         const ast = parse(tr);
         // print(ast);
         // writeln("=");
@@ -34,16 +32,20 @@ void main(string[] args) {
                 value = *value.attrs["result"];
             }
             writeln(value.toString(10));
+            // Compare with .exp
+            try {
+                const exp = readText(filename.replace(".nix", ".exp")).strip();
+                auto value2 = eval(parse(exp));
+                value2.forceValueDeep();
+                assert(value == value2, "Expected: "~value2.toString);
+            }
+            catch (Exception e) {
+                // writeln("Failed: ", e.message);
+            }
         }
-        catch (Throwable e) {
+        catch (Exception e) {
             writeln("Failed: ", e.message);
         }
-        // Compare with exp
-        // const exp = readText(filename.replace(".nix", ".exp")).strip();
-        // auto value2 = eval(parse(exp));
-        // value2.forceValueDeep();
-        // writeln(value2);
-        // assert(value == value2);
         // writeln("Done.");
     }
 }

@@ -446,12 +446,12 @@ private Tok popNextTok(R)(ref R input, bool explodeString) pure if (isForwardRan
     case '/': // DIV or UPDATE or MULTILINE or PATH
         switch (input.empty ? EOF : input.front) {
         case '/':
-            input.popFront(); // eat the /
+            input.popFront(); // eat the 2nd /
             return Tok.UPDATE;
         case '*':
             while (true) {
                 input.popFront();
-                if (input.front == '*') {
+                while (input.front == '*') {
                     input.popFront(); // eat the *
                     if (input.front == '/') {
                         input.popFront(); // eat the /
@@ -742,7 +742,14 @@ struct TokenRange(R) if (isForwardRange!R) {
     void popFront() pure {
         auto loc = front.loc;
         while(true) {
-            front = popToken(input, false);
+            try {
+                front = popToken(input, false);
+            }
+            catch (ParseException e) {
+                e.file = "<input-stream>";
+                e.line = loc.line;
+                throw e;
+            }
             bool repeat = false;
             switch (front.tok) {
             case Tok.WHITESPACE:
