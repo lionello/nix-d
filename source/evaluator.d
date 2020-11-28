@@ -1,7 +1,7 @@
 module nix.evaluator;
 
 public import nix.value;
-import nix.primops;
+import nix.primops : baseEnv;
 
 debug import std.stdio : writeln;
 
@@ -47,10 +47,11 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
         return callFunction(v2, arg, pos);
     case Type.Lambda:
         auto env2 = new Env(f.env);
-        if (!f.lambda.formals) {
+        if (f.lambda.arg) {
             // add f.lambda.arg to the new env
             env2.vars[f.lambda.arg] = arg.dup;
-        } else {
+        }
+        if (f.lambda.formals) {
             auto attrs = forceValue(arg, pos).attrs;
             // For each formal argument, get the actual argument.  If
             // there is no matching actual argument but the formal
@@ -140,6 +141,12 @@ unittest {
     assert(5 == eval(new ExprBinaryOp(L, Tok.APP, new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2)), new ExprInt(L, 3))).integer);
 }
 
+string forceStringNoCtx(ref Value str) {
+    forceValue(str);
+    enforce!EvalException(!str.context.length, "the string '"~str.str~"' is not allowed to refer to a store path");
+    return str.str;
+}
+
 string tryAttrsToString(ref Value value, bool coerceMore) {
     auto toString = "__toString" in value.attrs;
     if (!toString) return null;
@@ -212,10 +219,12 @@ private string absPath(string path) @safe {
     return canonPath(path);
 }
 
+immutable storePath = "/nix/store";
+
 private string computeStorePathForPath(string path) @safe {
     import std.path : baseName;
     // FIXME: implement hashing
-    return "/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
+    return storePath~"/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
 }
 
 private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
@@ -497,7 +506,7 @@ class Evaluator : ConstVisitors {
         if (an.ident) {
             return an.ident;
         } else {
-            return forceValue(eval(an.expr, *env)).str;
+            return forceStringNoCtx(eval(an.expr, *env));
         }
     }
 
@@ -642,7 +651,7 @@ class Evaluator : ConstVisitors {
     }
 }
 
-public ref Value eval(in Expr expr, ref Env env = staticBaseEnv) /*pure*/ {
+public ref Value eval(in Expr expr, ref Env env = baseEnv) /*pure*/ {
     assert(expr);
     debug if (auto v = expr in env.cache) {
         assert(0);

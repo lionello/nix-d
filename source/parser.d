@@ -281,6 +281,7 @@ class ExprLambda : Expr {
     Expr body;
     this(Loc loc, Expr body, Ident arg, Formals formals) pure nothrow {
         assert(body);
+        assert(arg || formals);
         super(loc);
         this.arg = arg;
         this.formals = formals;

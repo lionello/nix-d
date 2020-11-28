@@ -16,8 +16,7 @@ void main(string[] args) {
         if (exists(filename.replace(".nix", ".exp-disabled"))) continue;
         writeln(filename);
         auto s = readText(filename);
-        auto tr = TokenRange!string(s);
-        const ast = parse(tr);
+        const ast = parse(s);
         // print(ast);
         // writeln("=");
         try {
@@ -32,8 +31,8 @@ void main(string[] args) {
                 value = *value.attrs["result"];
             }
             writeln(value.toString(10));
-            // Compare with .exp
             try {
+                // Compare with .exp, if it exists
                 const exp = readText(filename.replace(".nix", ".exp")).strip();
                 auto value2 = eval(parse(exp));
                 value2.forceValueDeep();
@@ -44,7 +43,7 @@ void main(string[] args) {
             }
         }
         catch (Exception e) {
-            writeln("Failed: ", e.message);
+            writeln("Failed: ", e);
         }
         // writeln("Done.");
     }

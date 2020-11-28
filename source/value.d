@@ -94,6 +94,12 @@ string typeOf(in Value v) @nogc @trusted pure nothrow {
 
 alias PathSet = bool[string];
 
+public PathSet dupx(in PathSet ps) {
+    PathSet result;
+    foreach (k,v; ps) result[k] = v;
+    return result;
+}
+
 private bool arrayPtrEquals(in Value*[] lhs, in Value*[] rhs) pure @nogc @safe {
     if (lhs.length != rhs.length) return false;
     foreach (i, p; lhs) if (*p != *rhs[i]) return false;
@@ -118,7 +124,7 @@ struct Value {
     private union {
         struct {
             string s;
-            // PathSet c; // TODO
+            PathSet c;
         }
 
         // string path;
@@ -148,7 +154,7 @@ struct Value {
         assert(str !is null);
         this.type = Type.String;
         this.s = str;
-        // this.c = context;
+        this.c = context;
     }
 
     this(string path) pure {
@@ -306,10 +312,10 @@ struct Value {
         return l[1..$];
     }
 
-    @property PathSet context() pure const {
+    @property const(PathSet) context() pure const {
         if (type == Type.Path) return [s:true];
         enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
-        return null; // TODO
+        return c;
     }
 
     // @property ref Value deref() pure {
@@ -354,7 +360,8 @@ struct Value {
         case Type.String:
             static if (OP == "+") {
             enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
-            PathSet ps = this.context().dup;
+            PathSet ps;
+            foreach (k, v; this.context()) ps[k] = v;
             foreach (k, v; rhs.context()) ps[k] = v;
             return Value(this.s ~ rhs.s, ps);
             }

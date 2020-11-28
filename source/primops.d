@@ -121,6 +121,21 @@ private Value lessThan(ref Value lhs, ref Value rhs) /*pure*/ {
     return Value(forceValue(lhs) < forceValue(rhs));
 }
 
+private Value listToAttrs(ref Value list) {
+    Bindings v;
+    foreach (k; forceValue(list).list) {
+        auto attrs = forceValue(*k).attrs;
+        auto j = "name" in attrs;
+        enforce!TypeException(j, "'name' attribute missing in a call to 'listToAttrs'");
+        const name = forceStringNoCtx(**j);
+        if (name in v) continue;
+        auto j2 = "value" in attrs;
+        enforce!TypeException(j2, "'value' attribute missing in a call to 'listToAttrs'");
+        v[name] = *j2;
+    }
+    return Value(v);
+}
+
 private Value toString(ref Value arg) /*pure*/ {
     return Value(coerceToString(arg, true), null); // TODO: context?
 }
@@ -184,6 +199,27 @@ private Value elemAt(ref Value list, ref Value index) /*pure*/ {
     return elemAt(list, forceValue(index).integer);
 }
 
+private Value hashString(ref Value type, ref Value str) {
+    import std.digest.md : md5Of;
+    import std.digest.sha : sha1Of, sha512Of, sha256Of;
+    static char[] toBase16(size_t S)(scope const(ubyte)[S] digest) pure {
+        import std.digest : toHexString, LetterCase;
+        return digest.toHexString!(LetterCase.lower).dup;
+    }
+    const hashtype = forceStringNoCtx(type);
+    forceValue(str);
+    string hash;
+    switch (hashtype) {
+    case "md5":    hash = toBase16(md5Of(str.str)); break;
+    case "sha1":   hash = toBase16(sha1Of(str.str)); break;
+    case "sha256": hash = toBase16(sha256Of(str.str)); break;
+    case "sha512": hash = toBase16(sha512Of(str.str)); break;
+    default:
+        throw new Exception("unknown hash type: "~hashtype);
+    }
+    return Value(hash, null);
+}
+
 private Value head(ref Value list) /*pure*/ {
     return elemAt(list, 0);
 }
@@ -230,7 +266,7 @@ private Value fromJSON(ref Value str) {
         case JSONType.false_:   return new Value(false);
         }
     }
-    return *convJSON(parseJSON(forceValue(str).str));
+    return *convJSON(parseJSON(forceStringNoCtx(str)));
 }
 
 private Value intersectAttrs(ref Value e1, ref Value e2) {
@@ -247,16 +283,35 @@ private Value intersectAttrs(ref Value e1, ref Value e2) {
 private Value import_(ref Value filename) /*pure*/ {
     import std.file : readText;
     auto s = readText(coerceToPath(filename));
-    auto tr = TokenRange!string(s);
-    return eval(parse(tr));
+    return eval(parse(s));
 }
 
 private Value getAttr(ref Value name, ref Value attrs) {
-    return *forceValue(attrs).attrs[forceValue(name).str];
+    return *forceValue(attrs).attrs[forceStringNoCtx(name)];
+}
+
+private Value getContext(ref Value str) {
+    auto context = forceValue(str).context;
+    Bindings attrs;
+    foreach (k, v; context) {
+        Bindings infoVal;
+        // infoVal["path"] = new Value(true);
+        // infoVal["allOutputs"] = new Value(true);
+        Value*[] outputs;
+        infoVal["outputs"] = new Value(outputs);
+        attrs[k] = new Value(infoVal);
+    }
+    return Value(attrs);
+}
+
+private Value getEnv(ref Value str) {
+    auto name = forceStringNoCtx(str);
+    import std.process: environment;
+    return Value(environment.get(name, ""), null);
 }
 
 private Value hasAttr(ref Value name, ref Value attrs) {
-    return Value((forceValue(name).str in forceValue(attrs).attrs) !is null);
+    return Value((forceStringNoCtx(name) in forceValue(attrs).attrs) !is null);
 }
 
 private Value attrValues(ref Value attrs) {
@@ -294,12 +349,12 @@ private Value tail(ref Value list) {
 private Value dirOf(ref Value file) {
     import std.path : dirName;
     const dir = dirName(coerceToString(file));
-    return file.type == Type.Path ? Value(dir) : Value(dir, file.context);
+    return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
 private Value catAttrs(ref Value v, ref Value listOfAttrs) {
     Value*[] list;
-    const attrName = forceValue(v).str;
+    const attrName = forceStringNoCtx(v);
     foreach (e; forceValue(listOfAttrs).list) {
         auto attr = attrName in forceValue(*e).attrs;
         if (attr) list ~= *attr;
@@ -334,7 +389,7 @@ private Value genericClosure(ref Value attr) {
 private Value baseNameOf(ref Value file) {
     import std.path : baseName;
     const dir = baseName(coerceToString(file));
-    return file.type == Type.Path ? Value(dir) : Value(dir, file.context);
+    return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
 private Value concatMap(ref Value fun, ref Value list) {
@@ -371,13 +426,13 @@ private Value substring(ref Value from, ref Value len, ref Value str) {
     auto end = start + forceValue(len).integer;
     if (start >= s.length) start = end = 0;
     else if (end > s.length) end = s.length;
-    return Value(s[start..end], str.context);
+    return Value(s[start..end], str.context.dupx);
 }
 
 private Value removeAttrs(ref Value attrs, ref Value list) {
     auto set = forceValue(attrs).attrs.dup;
     foreach (v; forceValue(list).list) {
-        set.remove(forceValue(*v).str);
+        set.remove(forceStringNoCtx(*v));
     }
     return Value(set);
 }
@@ -402,15 +457,15 @@ private Value deepSeq(ref Value a, ref Value b) {
     return forceValue(b);
 }
 
-private Value derivation(ref Value attrs) {
+private Value derivationStrict(ref Value attrs) {
     auto drvAttrs = forceValue(attrs).attrs.dup;
-    const name = forceValue(*drvAttrs["name"]).str;
+    const name = forceStringNoCtx(*drvAttrs["name"]);
     auto drv = new Value(drvAttrs);
     drvAttrs["all"] = new Value([drv]);
     drvAttrs["drvAttrs"] = new Value(drvAttrs);
-    drvAttrs["drvPath"] = new Value("/nix/store/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv", null);
+    drvAttrs["drvPath"] = new Value(storePath~"/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv", null);
     drvAttrs["out"] = drv;
-    drvAttrs["outPath"] = new Value("/nix/store/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, null);
+    drvAttrs["outPath"] = new Value(storePath~"/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, null);
     drvAttrs["outputName"] = new Value("out", null);
     drvAttrs["type"] = new Value("derivation", null);
     return *drv;
@@ -432,8 +487,6 @@ private Value filter(ref Value fun, ref Value list) {
     }
     return Value(output);
 }
-
-Env staticBaseEnv;
 
 static this() {
     import core.stdc.time : time;
@@ -460,10 +513,10 @@ static this() {
     Bindings globals = [
         "abort" : wrap!abort,
         "__add" : wrap!(binOp!"+"),
-        "__addErrorContext" : ni!"__addErrorContext",
+        // "__addErrorContext" : ni!"__addErrorContext",
         "__all" : wrap!all,
         "__any" : wrap!any,
-        "__appendContext" : ni!"__appendContext",
+        // "__appendContext" : ni!"__appendContext",//noctx
         "__attrNames" : wrap!attrNames,
         "__attrValues" : wrap!attrValues,
         "baseNameOf" : wrap!baseNameOf,
@@ -471,40 +524,40 @@ static this() {
         "__bitOr" :  wrap!(binOp!"|"),
         "__bitXor" :  wrap!(binOp!"^"),
         "__catAttrs" : wrap!catAttrs,
-        "__compareVersions" : ni!"__compareVersions",
+        // "__compareVersions" : ni!"__compareVersions",//noctx
         "__concatLists" : wrap!concatLists,
         "__concatMap" : wrap!concatMap,
         "__concatStringsSep" : wrap!concatStringsSep,
         "__currentSystem" : new Value("x86_64-darwin", null),
         "__currentTime" : new Value(time(null)),
         "__deepSeq" : wrap!deepSeq,
-        "derivation" : wrap!derivation, //lambda
-        "derivationStrict" : ni!"derivationStrict",
+        // "derivation" : wrap!derivation, //lambda
+        "derivationStrict" : wrap!derivationStrict,
         "dirOf" : wrap!dirOf,
         "__div" : wrap!(binOp!"/"),
         "__elem" : wrap!elem,
         "__elemAt" : wrap!elemAt,
         "false" : new Value(false),
-        "fetchGit" : ni!"fetchGit",
-        "fetchMercurial" : ni!"fetchMercurial",
-        "fetchTarball" : ni!"fetchTarball",
-        "__fetchurl" : ni!"__fetchurl",
+        // "fetchGit" : ni!"fetchGit",
+        // "fetchMercurial" : ni!"fetchMercurial",
+        // "fetchTarball" : ni!"fetchTarball",
+        // "__fetchurl" : ni!"__fetchurl",
         "__filter" : wrap!filter,
-        "__filterSource" : ni!"__filterSource",
-        "__findFile" : ni!"__findFile",
+        // "__filterSource" : ni!"__filterSource",
+        // "__findFile" : ni!"__findFile",
         "__foldl'" : wrap!foldl_,
         "__fromJSON" : wrap!fromJSON,
-        "fromTOML" : ni!"fromTOML",
+        // "fromTOML" : ni!"fromTOML",
         "__functionArgs" : wrap!functionArgs,
         "__genList" : wrap!genList,
         "__genericClosure" : wrap!genericClosure,
         "__getAttr" : wrap!getAttr,
-        "__getContext" : ni!"__getContext",
-        "__getEnv" : ni!"__getEnv",
+        "__getContext" : wrap!getContext,
+        "__getEnv" : wrap!getEnv,
         "__hasAttr" : wrap!hasAttr,
-        "__hasContext" : ni!"__hasContext",
-        "__hashFile" : ni!"__hashFile",
-        "__hashString" : ni!"__hashString",
+        // "__hasContext" : ni!"__hasContext",
+        // "__hashFile" : ni!"__hashFile",
+        "__hashString" : wrap!hashString,
         "__head" : wrap!head,
         "import" : wrap!import_,
         "__intersectAttrs" : wrap!intersectAttrs,
@@ -520,47 +573,47 @@ static this() {
         "__langVersion" : new Value(5),
         "__length" : wrap!length_,
         "__lessThan" : wrap!lessThan,
-        "__listToAttrs" : ni!"__listToAttrs",
+        "__listToAttrs" : wrap!listToAttrs,
         "map" : wrap!map,
-        "__mapAttrs" : ni!"__mapAttrs",
-        "__match" : ni!"__match",
+        // "__mapAttrs" : ni!"__mapAttrs",
+        // "__match" : ni!"__match", //noctx
         "__mul" : wrap!(binOp!"*"),
         "__nixPath" : new Value(cast(Value*[])[]),
         "__nixVersion" : new Value("2.3.4", null), //FIXME
         "null" : new Value,
-        "__parseDrvName" : ni!"__parseDrvName",
-        "__partition" : ni!"__partition",
-        "__path" : ni!"__path",
-        "__pathExists" : ni!"__pathExists",
-        "placeholder" : ni!"placeholder",
-        "__readDir" : ni!"__readDir",
-        "__readFile" : ni!"__readFile",
+        // "__parseDrvName" : ni!"__parseDrvName", //noctx
+        // "__partition" : ni!"__partition",
+        // "__path" : ni!"__path",
+        // "__pathExists" : ni!"__pathExists",
+        // "placeholder" : ni!"placeholder",
+        // "__readDir" : ni!"__readDir",
+        // "__readFile" : ni!"__readFile",
         "removeAttrs" : wrap!removeAttrs,
-        "__replaceStrings" : ni!"__replaceStrings",
-        "scopedImport" : ni!"scopedImport",
+        // "__replaceStrings" : ni!"__replaceStrings",
+        // "scopedImport" : ni!"scopedImport",
         "__seq" : wrap!seq,
         "__sort" : wrap!sort,
-        "__split" : ni!"__split",
-        "__splitVersion" : ni!"__splitVersion",
-        "__storeDir" : new Value("/nix/store"),
-        "__storePath" : ni!"__storePath",
+        // "__split" : ni!"__split",//noctx
+        // "__splitVersion" : ni!"__splitVersion",//noctx
+        "__storeDir" : new Value(storePath),
+        // "__storePath" : ni!"__storePath",
         "__stringLength" : wrap!stringLength,
         "__sub" : wrap!(binOp!"-"),
         "__substring" : wrap!substring,
         "__tail" : wrap!tail,
         "throw" : wrap!(throw_),
-        "__toFile" : ni!"__toFile",
+        // "__toFile" : ni!"__toFile",
         "__toJSON" : wrap!toJSON,
-        "__toPath" : ni!"__toPath",
+        // "__toPath" : ni!"__toPath",
         "toString" : wrap!(toString),
-        "__toXML" : ni!"__toXML",
-        "__trace" : ni!"__trace",
+        // "__toXML" : ni!"__toXML",
+        // "__trace" : ni!"__trace",
         "true" : new Value(true),
         "__tryEval" : wrap!tryEval,
         "__typeOf" : wrap!typeOf_,
-        "__unsafeDiscardOutputDependency" : ni!"__unsafeDiscardOutputDependency",
+        // "__unsafeDiscardOutputDependency" : ni!"__unsafeDiscardOutputDependency",
         "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext,
-        "__unsafeGetAttrPos" : ni!"__unsafeGetAttrPos",
+        // "__unsafeGetAttrPos" : ni!"__unsafeGetAttrPos", noctx
     ];
 
     Bindings builtins;
@@ -569,11 +622,22 @@ static this() {
         builtins[strip(k, "_")] = v;
     }
     globals["builtins"] = builtins["builtins"] = new Value(builtins);
+
     staticBaseEnv.vars = globals;
+
+    baseEnv.up = &staticBaseEnv;
+    immutable derivationNix = import("derivation.nix");
+    baseEnv.vars["derivation"] = eval(parse(derivationNix), staticBaseEnv).dup;
 }
+
+Env staticBaseEnv;
+Env baseEnv;
 
 unittest {
     assert(staticBaseEnv.up is null);
     assert(staticBaseEnv.vars["builtins"].type == Type.Attrs);
     assert(staticBaseEnv.vars["builtins"].attrs["builtins"].type == Type.Attrs);
+
+    assert(baseEnv.up is &staticBaseEnv);
+    assert(baseEnv.vars["derivation"].type == Type.Lambda);
 }

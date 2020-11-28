@@ -4,6 +4,7 @@
 	],
 	"copyright": "Copyright © 2020, Lionello Lunesu",
 	"description": "Lexer, parser, and evaluator for Nix files, written in D-lang.",
+	"stringImportPaths": ["."],
 	"license": "proprietary",
 	"name": "nix-d"
 }

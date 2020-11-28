@@ -190,8 +190,10 @@ private class Printer(W) if (isStringWriter!W) : ConstVisitors {
     }
 
     void visit(in ExprLambda e) {
-        write(e.arg);
-        write("@");
+        if (e.arg) {
+            write(e.arg);
+            write("@");
+        }
         if (e.formals) {
             write("{");
             foreach (a; e.formals.elems) {
