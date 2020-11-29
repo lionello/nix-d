@@ -92,12 +92,24 @@ string typeOf(in Value v) @nogc @trusted pure nothrow {
     }
 }
 
-alias PathSet = bool[string];
+alias Path = string;
+
+alias PathSet = bool[Path];
 
 public PathSet dupx(in PathSet ps) {
     PathSet result;
     foreach (k,v; ps) result[k] = v;
     return result;
+}
+
+struct String {
+    alias raw this;
+    string raw;
+    const(PathSet) context;
+}
+
+unittest {
+    assert(String.init is null);
 }
 
 private bool arrayPtrEquals(in Value*[] lhs, in Value*[] rhs) pure @nogc @safe {
@@ -122,12 +134,8 @@ struct Value {
     static Value TRUE() { return Value(true); }
 
     private union {
-        struct {
-            string s;
-            PathSet c;
-        }
-
-        // string path;
+        String s;
+        Path p;
         NixInt i;
         NixFloat f;
         bool b;
@@ -150,20 +158,23 @@ struct Value {
     //     this.r = r;
     // }
 
-    this(string str, PathSet context) pure {
-        assert(str !is null);
-        this.type = Type.String;
-        this.s = str;
-        this.c = context;
+    this(String str) pure {
+        this(str.raw, this.context);
     }
 
-    this(string path) pure {
+    this(string str, in PathSet context) pure {
+        assert(str !is null);
+        this.type = Type.String;
+        this.s = String(str, context);
+    }
+
+    this(Path path) pure {
         assert(path != "", "Path should not be empty");
         assert(path[0] == '/', "Path should be absolute: "~path);
         assert(path == "/" || path[$-1] != '/', "Path has trailing slash: "~path);
         assert(path != "/.");
         this.type = Type.Path;
-        this.s = path;
+        this.p = path;
     }
 
     this(NixInt integer) pure {
@@ -226,6 +237,14 @@ struct Value {
         this.l = [left, right];
     }
 
+    private @property string _string() @nogc pure const nothrow {
+        return type == Type.String ? s.raw : (type == Type.Path ? p : null);
+    }
+
+    private @property real _number() @nogc pure const nothrow {
+        return type == Type.Int ? i : (type == Type.Float ? f : real.nan);
+    }
+
     @property bool isNull() pure const nothrow {
         assert(type != Type.Thunk, "Must force value first");
         return type == Type.Null;
@@ -236,7 +255,7 @@ struct Value {
         return type == Type.Float || type == Type.Int;
     }
 
-    @property string str() pure const {
+    @property const(String) str() pure const {
         enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
         return s;
     }
@@ -251,9 +270,9 @@ struct Value {
         return f;
     }
 
-    @property string path() pure const {
+    @property Path path() pure const {
         enforce!TypeException(type == Type.Path, "value is "~typeOf(this)~" while a path was expected");
-        return s;
+        return p;
     }
 
     @property Bindings attrs() pure {
@@ -287,10 +306,6 @@ struct Value {
         return t;
     }
 
-    @property real number() @nogc pure const nothrow {
-        return type == Type.Int ? i : (type == Type.Float ? f : real.nan);
-    }
-
     @property Env* env() pure nothrow {
         assert(type == Type.Lambda || type == Type.Thunk);
         return e;
@@ -313,9 +328,9 @@ struct Value {
     }
 
     @property const(PathSet) context() pure const {
-        if (type == Type.Path) return [s:true];
+        if (type == Type.Path) return [p:true];
         enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
-        return c;
+        return s.context;
     }
 
     // @property ref Value deref() pure {
@@ -355,7 +370,7 @@ struct Value {
         case Type.Path:
             static if (OP == "+") {
             enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
-            return Value(canonPath(this.s ~ rhs.s));
+            return Value(canonPath(this.s ~ rhs._string));
             }
         case Type.String:
             static if (OP == "+") {
@@ -363,14 +378,14 @@ struct Value {
             PathSet ps;
             foreach (k, v; this.context()) ps[k] = v;
             foreach (k, v; rhs.context()) ps[k] = v;
-            return Value(this.s ~ rhs.s, ps);
+            return Value(this.s ~ rhs._string, ps);
             }
         default:
         }
         assert(0, "No operator "~OP~" for type "~typeOf(this)~" and "~typeOf(rhs));
     }
 
-    private static int cmp(L,R)(ref const L lhs, ref const R rhs) @nogc pure @safe {
+    private static int cmp(L,R)(in L lhs, in R rhs) @nogc pure @safe nothrow {
         // static if (__traits(compiles, L.init.opCmp(R.init)))
         return (lhs > rhs) - (lhs < rhs);
     }
@@ -397,7 +412,7 @@ struct Value {
             break;
         case Type.Path:
         case Type.String:
-            return cmp(this.s, rhs.s);
+            return cmp(this.s, rhs._string);
         default:
         }
         assert(0, "cannot compare type "~typeOf(this)~" with "~typeOf(rhs));
@@ -409,11 +424,11 @@ struct Value {
             return type == v.type;
         case Type.Path:
         case Type.String:
-            return type == v.type && s == v.s; // TODO: compare contexts
+            return type == v.type && s == v._string; // TODO: compare contexts
         case Type.Int:
-            return i == v.number;
+            return i == v._number;
         case Type.Float:
-            return f == v.number;
+            return f == v._number;
         case Type.Bool:
             return type == v.type && b == v.b;
         case Type.App:
@@ -443,7 +458,7 @@ struct Value {
         case Type.Null:
             return "null";
         case Type.Path:
-            return s;
+            return p;
         case Type.String:
             import nix.printer : escapeString;
             return escapeString(s);
@@ -489,12 +504,16 @@ struct Value {
         case Type.Null:
             return 0xDAEC0270;
         case Type.Path:
-            return hashOf(s);
+            return hashOf(p);
         case Type.String:
-            return hashOf(s, 0x46FEB33A); // TODO context
+            size_t h = hashOf(s.raw, 0x46FEB33A); // TODO hash the context as well
+            try { // map iteration can throw?
+                foreach (path; s.context) h ^= hashOf(path);
+            } catch (Exception e) {}
+            return h;
         case Type.Int:
         case Type.Float:
-            return hashOf(number);
+            return hashOf(_number);
         case Type.Bool:
             return b ? 0xCA1C5848 : 0x742D4705;
         case Type.List:
@@ -504,7 +523,8 @@ struct Value {
             return h;
         case Type.Attrs:
             size_t h = 0;
-            try {
+            try { // map iteration can throw?
+                // Don't care about the order of the keys
                 foreach (k, p; a) h ^= hashOf(k, p.toHash());
             } catch (Exception e) {}
             return h;

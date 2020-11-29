@@ -487,6 +487,13 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         return binds;
     case Tok.IDENTIFIER:
         input.popFront();
+        if (t.s == "__curPos") {
+            auto pos = new ExprAttrs(t.loc);
+            // pos.attrs["file"] = ExprAttrs.AttrDef(new ExprString(t.loc, t.loc.file));
+            pos.attrs["line"] = ExprAttrs.AttrDef(new ExprInt(t.loc, t.loc.line));
+            // pos.attrs["column"] = ExprAttrs.AttrDef(new ExprInt(t.loc, t.loc.column));
+            return pos;
+        }
         return new ExprVar(t.loc, t.s);
     case Tok.LEFT_BRACKET:
         input.popFront(); // eat the [

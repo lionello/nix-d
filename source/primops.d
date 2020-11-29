@@ -137,11 +137,11 @@ private Value listToAttrs(ref Value list) {
 }
 
 private Value toString(ref Value arg) /*pure*/ {
-    return Value(coerceToString(arg, true), null); // TODO: context?
+    return Value(coerceToString(arg, true, false), null); // TODO: context?
 }
 
 private Value throw_(ref Value msg) /*pure*/ {
-    throw new ThrownException(coerceToString(msg));
+    throw new ThrownException(coerceToString(msg)); // TODO copyToStore=true?
 }
 
 private Value toJSON(ref Value v) {
@@ -165,17 +165,17 @@ private Value toJSON(ref Value v) {
             }
             return s ~ "]";
         case Type.Attrs:
-            auto s = tryAttrsToString(v, false);
+            auto s = tryAttrsToString(v, false, false);
             if (s !is null) return escapeString(s);
-            s = "{";
-            bool first = true;
-            // TODO: sort by key
+            auto obj = "{";
+            // TODO: sort by key?
             foreach (k, e; v.attrs) {
-                if (!first) s ~= ',';
-                first = false;
-                s ~= escapeString(k)~":"~convJSON(*e);
+                if (obj.length>1) obj ~= ',';
+                obj ~= escapeString(k);
+                obj ~= ":";
+                obj ~= convJSON(*e);
             }
-            return s ~ '}';
+            return obj ~ '}';
         case Type.App:
         case Type.PrimOp:
         case Type.PrimOpApp:
@@ -188,7 +188,7 @@ private Value toJSON(ref Value v) {
 }
 
 private Value abort(ref Value msg) /*pure*/ {
-    throw new AbortException(coerceToString(msg));
+    throw new AbortException(coerceToString(msg)); // TODO copyToStore = true?
 }
 
 private Value elemAt(ref Value list, NixInt n) /*pure*/ {
@@ -210,10 +210,10 @@ private Value hashString(ref Value type, ref Value str) {
     forceValue(str);
     string hash;
     switch (hashtype) {
-    case "md5":    hash = toBase16(md5Of(str.str)); break;
-    case "sha1":   hash = toBase16(sha1Of(str.str)); break;
-    case "sha256": hash = toBase16(sha256Of(str.str)); break;
-    case "sha512": hash = toBase16(sha512Of(str.str)); break;
+    case "md5":    hash = toBase16(md5Of(str.str.raw)); break;
+    case "sha1":   hash = toBase16(sha1Of(str.str.raw)); break;
+    case "sha256": hash = toBase16(sha256Of(str.str.raw)); break;
+    case "sha512": hash = toBase16(sha512Of(str.str.raw)); break;
     default:
         throw new Exception("unknown hash type: "~hashtype);
     }
@@ -287,7 +287,9 @@ private Value import_(ref Value filename) /*pure*/ {
 }
 
 private Value getAttr(ref Value name, ref Value attrs) {
-    return *forceValue(attrs).attrs[forceStringNoCtx(name)];
+    auto ptr = forceStringNoCtx(name) in forceValue(attrs).attrs;
+    enforce!EvalException(ptr, "attribute '"~name.str~"' missing");
+    return **ptr;
 }
 
 private Value getContext(ref Value str) {
@@ -314,21 +316,32 @@ private Value hasAttr(ref Value name, ref Value attrs) {
     return Value((forceStringNoCtx(name) in forceValue(attrs).attrs) !is null);
 }
 
-private Value attrValues(ref Value attrs) {
+private auto lexicographicOrder(Bindings attrs) {
     import std.algorithm : sort;
+    return attrs.keys.sort;
+}
+
+unittest {
+    import std.range : array;
+    Bindings v = ["b": null];
+    v["bb"] = null;
+    v["a"] = null;
+    assert(v.lexicographicOrder.array == ["a", "b", "bb"]);
+}
+
+private Value attrValues(ref Value attrs) {
     Value*[] values;
     auto aa = forceValue(attrs).attrs;
-    foreach (name; aa.keys.sort) {
+    foreach (name; aa.lexicographicOrder) {
         values ~= aa[name];
     }
     return Value(values);
 }
 
 private Value attrNames(ref Value attrs) {
-    import std.algorithm : sort;
     Value*[] names;
     auto aa = forceValue(attrs).attrs;
-    foreach (name; aa.keys.sort) {
+    foreach (name; aa.lexicographicOrder) {
         names ~= new Value(name, null);
     }
     return Value(names);
@@ -348,7 +361,7 @@ private Value tail(ref Value list) {
 
 private Value dirOf(ref Value file) {
     import std.path : dirName;
-    const dir = dirName(coerceToString(file));
+    const dir = dirName(coerceToString(file, false, false));
     return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
@@ -388,7 +401,7 @@ private Value genericClosure(ref Value attr) {
 
 private Value baseNameOf(ref Value file) {
     import std.path : baseName;
-    const dir = baseName(coerceToString(file));
+    const dir = baseName(coerceToString(file, false, false));
     return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
@@ -458,17 +471,24 @@ private Value deepSeq(ref Value a, ref Value b) {
 }
 
 private Value derivationStrict(ref Value attrs) {
-    auto drvAttrs = forceValue(attrs).attrs.dup;
+    auto drvAttrs = forceValue(attrs).attrs;
+    enforce!EvalException("name" in drvAttrs, "required attribute 'name' missing");
     const name = forceStringNoCtx(*drvAttrs["name"]);
-    auto drv = new Value(drvAttrs);
-    drvAttrs["all"] = new Value([drv]);
-    drvAttrs["drvAttrs"] = new Value(drvAttrs);
-    drvAttrs["drvPath"] = new Value(storePath~"/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv", null);
-    drvAttrs["out"] = drv;
-    drvAttrs["outPath"] = new Value(storePath~"/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, null);
-    drvAttrs["outputName"] = new Value("out", null);
-    drvAttrs["type"] = new Value("derivation", null);
-    return *drv;
+    const drvPath = "/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv";
+    const drvPathS = storeDir~drvPath;
+
+    auto outputs = ["out"];
+    foreach (key; drvAttrs.lexicographicOrder) {
+        if (key == "__ignoreNulls") continue;
+        // auto val = coerceToString(*drvAttrs[key], true)
+    }
+
+    Bindings v;
+    v["drvPath"] = new Value(drvPathS, ["="~drvPathS:true]);
+    foreach (i; outputs) {
+        v[i] = new Value(storeDir~"/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, ["!"~i~"!"~drvPath:true]);
+    }
+    return Value(v);
 }
 
 private Value concatLists(ref Value lists) {
@@ -528,10 +548,9 @@ static this() {
         "__concatLists" : wrap!concatLists,
         "__concatMap" : wrap!concatMap,
         "__concatStringsSep" : wrap!concatStringsSep,
-        "__currentSystem" : new Value("x86_64-darwin", null),
-        "__currentTime" : new Value(time(null)),
+        "__currentSystem" : new Value("x86_64-darwin", null), // impure
+        "__currentTime" : new Value(time(null)), // impure
         "__deepSeq" : wrap!deepSeq,
-        // "derivation" : wrap!derivation, //lambda
         "derivationStrict" : wrap!derivationStrict,
         "dirOf" : wrap!dirOf,
         "__div" : wrap!(binOp!"/"),
@@ -570,7 +589,7 @@ static this() {
         "isNull" : wrap!isNull,
         "__isPath" : wrap!isPath,
         "__isString" : wrap!isString,
-        "__langVersion" : new Value(5),
+        "__langVersion" : new Value(5), //baseEnv
         "__length" : wrap!length_,
         "__lessThan" : wrap!lessThan,
         "__listToAttrs" : wrap!listToAttrs,
@@ -578,8 +597,8 @@ static this() {
         // "__mapAttrs" : ni!"__mapAttrs",
         // "__match" : ni!"__match", //noctx
         "__mul" : wrap!(binOp!"*"),
-        "__nixPath" : new Value(cast(Value*[])[]),
-        "__nixVersion" : new Value("2.3.4", null), //FIXME
+        "__nixPath" : new Value(cast(Value*[])[]), //impure
+        "__nixVersion" : new Value("2.3.4", null), //baseEnv
         "null" : new Value,
         // "__parseDrvName" : ni!"__parseDrvName", //noctx
         // "__partition" : ni!"__partition",
@@ -595,8 +614,8 @@ static this() {
         "__sort" : wrap!sort,
         // "__split" : ni!"__split",//noctx
         // "__splitVersion" : ni!"__splitVersion",//noctx
-        "__storeDir" : new Value(storePath),
-        // "__storePath" : ni!"__storePath",
+        "__storeDir" : new Value(storeDir), // baseEnv
+        // "__storePath" : ni!"__storePath", // impure
         "__stringLength" : wrap!stringLength,
         "__sub" : wrap!(binOp!"-"),
         "__substring" : wrap!substring,

@@ -147,28 +147,27 @@ string forceStringNoCtx(ref Value str) {
     return str.str;
 }
 
-string tryAttrsToString(ref Value value, bool coerceMore) {
+String tryAttrsToString(ref Value value, bool coerceMore, bool copyToStore) {
     auto toString = "__toString" in value.attrs;
-    if (!toString) return null;
+    if (!toString) return String.init;
     auto str = callFunction(**toString, value, Loc());
-    return coerceToString(str, coerceMore);
+    return coerceToString(str, coerceMore, copyToStore);
 }
 
-string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
+String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore = true) /*pure*/ {
     forceValue(value);
     switch (value.type) {
     case Type.String:
-        // TODO: copy context to out param
         return value.str;
     case Type.Path:
-        // TODO: by default this would copy to store
-        return canonPath(value.path);
+        auto path = canonPath(value.path);
+        return copyToStore ? copyPathToStore(path) : String(path);
     case Type.Attrs:
-        auto s = tryAttrsToString(value, coerceMore);
+        auto s = tryAttrsToString(value, coerceMore, copyToStore);
         if (s !is null) return s;
         auto outPath = "outPath" in value.attrs;
         if (outPath) {
-            return coerceToString(**outPath, coerceMore);
+            return coerceToString(**outPath, coerceMore, copyToStore);
         }
         break;
     // case Type.External: TODO
@@ -176,19 +175,20 @@ string coerceToString(ref Value value, bool coerceMore = false) /*pure*/ {
         if (!coerceMore) break;
         switch (value.type) {
         case Type.Bool:
-            return value.boolean ? "1" : "";
+            return String(value.boolean ? "1" : "");
         case Type.Null:
-            return "";
+            return String("");
         case Type.List:
-            string result;
-            foreach(outPath, ref v; value.list) {
-                if (outPath) result ~= ' ';
-                result ~= coerceToString(value, coerceMore);
+            String result;
+            foreach(i, v; value.list) {
+                if (i) result.raw ~= ' ';
+                result.raw ~= coerceToString(*v, coerceMore, copyToStore);
+                // TODO: merge contexts
             }
             return result;
         case Type.Int:
         case Type.Float:
-            return value.toString();
+            return String(value.toString());
         default:
         }
     }
@@ -201,8 +201,9 @@ unittest {
 }
 
 string coerceToPath(ref Value v) {
-    const path = coerceToString(v, false);
+    const path = coerceToString(v, false, false);
     enforce!EvalException(path != "" && path[0] == '/', "string "~path~" doesn't represent an absolute path");
+    // FIXME: don't discard context
     return path;
 }
 
@@ -219,12 +220,17 @@ private string absPath(string path) @safe {
     return canonPath(path);
 }
 
-immutable storePath = "/nix/store";
+immutable storeDir = "/nix/store";
+// immutable drvExtension = ".drv";
 
-private string computeStorePathForPath(string path) @safe {
+private String copyPathToStore(Path path) @safe {
+    return String(computeStorePathForPath(path), [path:true]);
+}
+
+private string computeStorePathForPath(Path path) @safe {
     import std.path : baseName;
-    // FIXME: implement hashing
-    return storePath~"/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
+    // FIXME: implement file hashing
+    return storeDir~"/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
 }
 
 private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
@@ -397,11 +403,8 @@ class Evaluator : ConstVisitors {
                 // auto __add = lookupVar("__add"); // can be overridden
                 value = (lhs + forceValue(rhs)).dup;
             } else {
-                auto str = coerceToString(rhs);
-                if (lhs.type == Type.String && rhs.type == Type.Path) {
-                    str = computeStorePathForPath(str);
-                }
-                value = (lhs + Value(str, null)).dup;
+                auto str = coerceToString(rhs, false, lhs.type == Type.String);
+                value = (lhs + Value(str, str.context)).dup;
             }
             break;
         case Tok.NEGATE:

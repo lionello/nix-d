@@ -100,7 +100,7 @@ enum Tok {
 
 /// Location in source file
 struct Loc {
-    uint line; //, column;
+    uint line;//, column;
 }
 
 /// A lexed token
