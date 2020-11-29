@@ -224,13 +224,17 @@ immutable storeDir = "/nix/store";
 // immutable drvExtension = ".drv";
 
 private String copyPathToStore(Path path) @safe {
-    return String(computeStorePathForPath(path), [path:true]);
+    import std.path : baseName;
+    return String(computeStorePathForPath(baseName(path), path), [path:true]);
 }
 
-private string computeStorePathForPath(Path path) @safe {
-    import std.path : baseName;
+string printStorePath(string path) @safe {
+    return storeDir~"/"~path;
+}
+
+private string computeStorePathForPath(string name, Path path) @safe {
     // FIXME: implement file hashing
-    return storeDir~"/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ baseName(path);
+    return printStorePath("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ name);
 }
 
 private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {

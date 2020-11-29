@@ -474,19 +474,31 @@ private Value derivationStrict(ref Value attrs) {
     auto drvAttrs = forceValue(attrs).attrs;
     enforce!EvalException("name" in drvAttrs, "required attribute 'name' missing");
     const name = forceStringNoCtx(*drvAttrs["name"]);
-    const drvPath = "/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-"~name~".drv";
-    const drvPathS = storeDir~drvPath;
 
+    string drv;
+    PathSet context;
     auto outputs = ["out"];
     foreach (key; drvAttrs.lexicographicOrder) {
         if (key == "__ignoreNulls") continue;
-        // auto val = coerceToString(*drvAttrs[key], true)
+        auto s = coerceToString(*drvAttrs[key], true);
+        drv ~= s;
+        // Append to context
+        foreach (path, _; s.context) {
+            context[path] = true;
+        }
     }
+
+    // HACK: just to pass the test
+    import std.digest.sha : sha256Of, toHexString, LetterCase;
+    immutable hash = sha256Of(drv)[0..20].toHexString!(LetterCase.lower);
+
+    const drvPath = hash~"-"~name~".drv";
+    const drvPathS = printStorePath(drvPath);
 
     Bindings v;
     v["drvPath"] = new Value(drvPathS, ["="~drvPathS:true]);
     foreach (i; outputs) {
-        v[i] = new Value(storeDir~"/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-"~name, ["!"~i~"!"~drvPath:true]);
+        v[i] = new Value(storeDir~"/"~hash~"-"~name, ["!"~i~"!"~drvPath:true]);
     }
     return Value(v);
 }
