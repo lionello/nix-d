@@ -340,7 +340,9 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
                     return tokens ~ Token(Tok.IND_STRING_CLOSE);
                 }
                 input.popFront(); // eat the escaped char
-            } else str ~= input.front;
+            } else {
+                str ~= '\'';
+            }
             break;
         case '$':
             if (auto t = parseDollar(input)) {
@@ -359,14 +361,14 @@ Token[] parseIndString(R)(ref R input, bool popOpen = true) pure if (isForwardRa
 }
 
 unittest {
-    auto r = `''y${a}'''c''$''\n''`;
+    auto r = `''y${a}'''c''$''\n ' ''`;
     assert([
         Token(Tok.IND_STRING_OPEN),
         Token(Tok.STR, "y"),
         Token(Tok.DOLLAR_CURLY),
         Token(Tok.IDENTIFIER, "a"),
         Token(Tok.RIGHT_CURLY),
-        Token(Tok.STR, "''c$\n"),
+        Token(Tok.STR, "''c$\n ' "),
         Token(Tok.IND_STRING_CLOSE)] == parseIndString(r));
     assert(r.empty, r);
 }
