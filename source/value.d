@@ -163,7 +163,7 @@ struct Value {
     }
 
     this(string str, in PathSet context) pure {
-        assert(str !is null);
+        // assert(str !is null);
         this.type = Type.String;
         this.s = String(str, context);
     }

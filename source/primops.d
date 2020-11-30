@@ -428,6 +428,12 @@ private Value unsafeDiscardStringContext(ref Value str) {
     return Value(coerceToString(str), null);
 }
 
+// private Value unsafeGetAttrPos(ref Value str, ref Value attrs) {
+//     const attrName = forceStringNoCtx(str);
+//     const attr = attrName in forceValue(attrs).attrs;
+//     return attr ? Value(*attr.) : Value();
+// }
+
 private Value stringLength(ref Value str) {
     return Value(coerceToString(str).length);
 }
@@ -644,7 +650,7 @@ static this() {
         "__typeOf" : wrap!typeOf_,
         // "__unsafeDiscardOutputDependency" : ni!"__unsafeDiscardOutputDependency",
         "__unsafeDiscardStringContext" : wrap!unsafeDiscardStringContext,
-        // "__unsafeGetAttrPos" : ni!"__unsafeGetAttrPos", noctx
+        // "__unsafeGetAttrPos" : wrap!unsafeGetAttrPos,
     ];
 
     Bindings builtins;

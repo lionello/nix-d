@@ -452,6 +452,18 @@ unittest {
     assert(parse("false=2;").attrs.length == 1);
 }
 
+private bool isEmptyLine(string line) pure @safe {
+    import std.algorithm : all;
+    import std.ascii : isWhite;
+    return line.all!isWhite;
+}
+
+unittest {
+    static assert(!isEmptyLine(" a"));
+    static assert(isEmptyLine("  \n"));
+    static assert(isEmptyLine(""));
+}
+
 private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     const t = input.front;
     switch (t.tok) {
@@ -530,15 +542,34 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         auto findNixPath = new ExprBinaryOp(t.loc, Tok.APP, new ExprVar(t.loc, "__findFile"), new ExprVar(t.loc, "__nixPath"));
         return new ExprBinaryOp(t.loc, Tok.APP, findNixPath, new ExprString(t.loc, t.s));
     case Tok.STRING_OPEN:
+        input.popFront(); // eat the "
         return parseStr(input);
     case Tok.STRING:
         auto tokens = parseString(input.front.s);
         input.popFront();
+        assert(tokens.front.tok == Tok.STRING_OPEN);
+        tokens.popFront(); // eat the "
         return parseStr(tokens);
     case Tok.IND_STRING:
-        // TODO: strip indentation
-        auto tokens = parseIndString(input.front.s);
+        assert(input.front.s[0..2] == "''");
+        assert(input.front.s[$-2..$] == "''");
+        import std.algorithm : filter, map, minElement, countUntil, splitter;
+        import std.array : join, array;
+        auto lines = input.front.s[2..$-2].splitter('\n').array;
         input.popFront();
+        if (lines.length && lines[0].isEmptyLine) lines = lines[1..$];
+        if (lines.length && lines[$-1].isEmptyLine) lines[$-1] = "";
+        const indentation = lines
+            .filter!(line => !isEmptyLine(line))
+            .map!(line => line.countUntil!"a!=b"(' '))
+            .minElement(int.max) % int.max;
+        if (indentation > 0) {
+            foreach (ref line; lines) {
+                line = line.length > indentation ? line[indentation..$] : "";
+            }
+        }
+        auto text = lines.join('\n') ~ "''";
+        auto tokens = parseIndString(text, false);
         return parseStr(tokens);
     default:
         return null;
@@ -571,15 +602,15 @@ unittest {
 }
 
 private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
-    assert(input.front.tok == Tok.STRING_OPEN || input.front.tok == Tok.IND_STRING_OPEN);
-    input.popFront(); // eat the " or ''
     Expr[] es;
+    const EOF = -1;
     while (true) {
-        switch(input.front.tok) {
+        switch(input.empty ? EOF : input.front.tok) {
         case Tok.STR:
             es ~= new ExprString(input.front.loc, input.front.s);
             input.popFront(); // eat the str
             break;
+        case EOF:
         case Tok.IND_STRING_CLOSE:
         case Tok.STRING_CLOSE:
             const loc = input.front.loc;
@@ -607,7 +638,7 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
 
 unittest {
     auto r = [
-        Token(Tok.STRING_OPEN),
+        // Token(Tok.STRING_OPEN),
         Token(Tok.DOLLAR_CURLY),
         Token(Tok.INT, "2"),
         Token(Tok.RIGHT_CURLY),
@@ -1009,6 +1040,8 @@ private AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.STRING: // could contain ${}
         auto tokens = parseString(input.front.s);
         input.popFront();
+        assert(tokens.front.tok == Tok.STRING_OPEN);
+        tokens.popFront(); // eat the "
         auto expr = parseStr(tokens);
         auto string_expr = cast(ExprString) expr;
         return string_expr ? AttrName(string_expr.s) : AttrName(expr);
