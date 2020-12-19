@@ -168,12 +168,11 @@ private Value toJSON(ref Value v) {
             auto s = tryAttrsToString(v, false, false);
             if (s !is null) return escapeString(s);
             auto obj = "{";
-            // TODO: sort by key?
-            foreach (k, e; v.attrs) {
+            foreach (k; lexicographicOrder(v.attrs)) {
                 if (obj.length>1) obj ~= ',';
                 obj ~= escapeString(k);
                 obj ~= ":";
-                obj ~= convJSON(*e);
+                obj ~= convJSON(*v.attrs[k]);
             }
             return obj ~ '}';
         case Type.App:
