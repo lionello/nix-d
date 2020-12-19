@@ -420,7 +420,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 goto default;
             assert(ap.length, input.front.s);
             input = ass; // fast forward
-            assert(input.front.tok == Tok.ASSIGN, input.front.s);
+            enforce(input.front.tok == Tok.ASSIGN, "syntax error, unexpected '"~input.front.s~"', expecting '='");
             input.popFront(); // eat the =
             auto expr = parseExpression(input);
             assert(expr, input.front.s);
@@ -429,7 +429,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
         default:
             return null;
         }
-        assert(input.front.tok == Tok.SEMICOLON, input.front.s);
+        enforce(input.front.tok == Tok.SEMICOLON, "syntax error, unexpected '"~input.front.s~"', expecting ';'");
         input.popFront(); // eat the ;
     }
     // assert(0);
@@ -469,21 +469,21 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     switch (t.tok) {
     case Tok.LET:
         input.popFront(); // eat the let
-        assert(input.front.tok == Tok.LEFT_CURLY, input.front.s);
+        enforce(input.front.tok == Tok.LEFT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '{'");
         input.popFront(); // eat the {
         /* Let expressions `let {..., body = ...}' are just desugared
            into `(rec {..., body = ...}).body'. */
         auto binds = parseBinds(input);
-        assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
+        enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '}'");
         input.popFront(); // eat the }
         binds.recursive = true;
         return new ExprSelect(t.loc, binds, [AttrName("body")]);
     case Tok.REC:
         input.popFront(); // eat the rec
-        assert(input.front.tok == Tok.LEFT_CURLY, input.front.s);
+        enforce(input.front.tok == Tok.LEFT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '{'");
         input.popFront(); // eat the {
         auto binds = parseBinds(input);
-        assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
+        enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '}'");
         input.popFront(); // eat the }
         binds.recursive = true;
         return binds;
@@ -494,7 +494,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         if (!binds)
             return null;
         input = b; // fast forward
-        assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
+        enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '}'");
         input.popFront(); // eat the }
         return binds;
     case Tok.IDENTIFIER:
@@ -510,7 +510,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.LEFT_BRACKET:
         input.popFront(); // eat the [
         auto e = parseList(input);
-        assert(input.front.tok == Tok.RIGHT_BRACKET, input.front.s);
+        enforce(input.front.tok == Tok.RIGHT_BRACKET, "syntax error, unexpected '"~input.front.s~"', expecting ']'");
         input.popFront(); // eat the ]
         return e;
     case Tok.LEFT_PARENS:
@@ -518,7 +518,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         auto e = parseExpression(input);
         debug(PARSER) writeln("parseSimple: parseExpression returned ", format(e));
         assert(e, input.front.s);
-        assert(input.front.tok == Tok.RIGHT_PARENS, input.front.s);
+        enforce(input.front.tok == Tok.RIGHT_PARENS, "syntax error, unexpected '"~input.front.s~"', expecting ')'");
         input.popFront(); // eat the )
         // Wrap the resulting expression in a NOP to avoid assoc reshuffling
         return new ExprNop(t.loc, e);
@@ -716,13 +716,13 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         case Tok.AT:
             input.popFront(); // eat the id
             input.popFront(); // eat the @
-            assert(input.front.tok == Tok.LEFT_CURLY, input.front.s);
+            enforce(input.front.tok == Tok.LEFT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '{'");
             input.popFront(); // eat the {
             auto formals = parseFormals(input);
             assert(formals, input.front.s);
-            assert(input.front.tok == Tok.RIGHT_CURLY, input.front.s);
+            enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '}'");
             input.popFront(); // eat the }
-            assert(input.front.tok == Tok.COLON, input.front.s);
+            enforce(input.front.tok == Tok.COLON, "syntax error, unexpected '"~input.front.s~"', expecting ':'");
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
@@ -744,16 +744,15 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         assert(formals, input.front.s);
         if (f.front.tok != Tok.RIGHT_CURLY)
             goto default;
-        assert(f.front.tok == Tok.RIGHT_CURLY, f.front.s);
         f.popFront(); // eat the }
         switch (f.front.tok) {
         case Tok.AT:
             input = f; // fast forward
             input.popFront(); // eat the @
-            assert(input.front.tok == Tok.IDENTIFIER, input.front.s);
             const id = input.front.s;
+            enforce(input.front.tok == Tok.IDENTIFIER, "syntax error, unexpected '"~input.front.s~"', expecting an identifier");
             input.popFront(); // eat the id
-            assert(input.front.tok == Tok.COLON, input.front.s);
+            enforce(input.front.tok == Tok.COLON, "syntax error, unexpected '"~input.front.s~"', expecting ':'");
             input.popFront(); // eat the :
             auto body = parseExpression(input);
             assert(body, input.front.s);
@@ -773,14 +772,14 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront(); // eat the assert
         auto expr = parseExpression(input);
         assert(expr, input.front.s);
-        assert(input.front.tok == Tok.SEMICOLON, input.front.s);
+        enforce(input.front.tok == Tok.SEMICOLON, "syntax error, unexpected '"~input.front.s~"', expecting ';'");
         input.popFront(); // eat the ;
         return new ExprAssert(t.loc, expr, parseExpression(input));
     case Tok.WITH:
         input.popFront(); // eat the with
         auto expr = parseExpression(input);
         assert(expr, input.front.s);
-        assert(input.front.tok == Tok.SEMICOLON, input.front.s);
+        enforce(input.front.tok == Tok.SEMICOLON, "syntax error, unexpected '"~input.front.s~"', expecting ';'");
         input.popFront(); // eat the ;
         return new ExprWith(t.loc, expr, parseExpression(input));
     case Tok.LET:
@@ -792,7 +791,7 @@ private Expr parseExpression(R)(ref R input) pure if (isTokenRange!R) {
         auto binds = parseBinds(input);
         assert(binds, input.front.s);
         assert(0 == binds.dynamicAttrs.length); // dynamic attributes not allowed here
-        assert(input.front.tok == Tok.IN, input.front.s);
+        enforce(input.front.tok == Tok.IN, "syntax error, unexpected '"~input.front.s~"', expecting 'in'");
         input.popFront(); // eat the in
         return new ExprLet(t.loc, binds, parseExpression(input));
     default:
@@ -808,11 +807,11 @@ private Expr parseIf(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront(); // eat the if
         auto cond = parseExpression(input);
         assert(cond, input.front.s);
-        assert(input.front.tok == Tok.THEN, input.front.s);
+        enforce(input.front.tok == Tok.THEN, "syntax error, unexpected '"~input.front.s~"', expecting 'then'");
         input.popFront(); // eat the then
         auto then = parseExpression(input);
         assert(then, input.front.s);
-        assert(input.front.tok == Tok.ELSE, input.front.s);
+        enforce(input.front.tok == Tok.ELSE, "syntax error, unexpected '"~input.front.s~"', expecting 'else'");
         input.popFront(); // eat the else
         auto else_ = parseExpression(input);
         assert(else_, input.front.s);
@@ -1034,7 +1033,7 @@ private AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
     case Tok.DOLLAR_CURLY:
         input.popFront(); // eat the ${
         auto expr = parseExpression(input);
-        assert(input.front.tok == Tok.RIGHT_CURLY);
+        enforce(input.front.tok == Tok.RIGHT_CURLY, "syntax error, unexpected '"~input.front.s~"', expecting '}'");
         input.popFront(); // eat the }
         return AttrName(expr);
     case Tok.STRING: // could contain ${}
