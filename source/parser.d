@@ -23,6 +23,10 @@ struct AttrName {
         assert(e);
         this.expr = e;
     }
+
+    string toString() pure const {
+        return ident ? ident : (`"${` ~ expr.toString() ~ `}"`);
+    }
 }
 
 alias AttrPath = AttrName[];
@@ -82,6 +86,7 @@ abstract class Expr : Visitable {
     }
 
     mixin Accept;
+    override string toString() pure const { return "…"; }
 }
 
 class ExprNop : Expr {
@@ -94,6 +99,7 @@ class ExprNop : Expr {
 
     //override void accept(Visitor v) { v.visit(this); }
     mixin Accept;
+    override string toString() pure const { return "("~expr.toString()~")"; }
 }
 
 class ExprOpNot : Expr {
@@ -106,6 +112,7 @@ class ExprOpNot : Expr {
 
     //override void accept(Visitor v) { v.visit(this); }
     mixin Accept;
+    override string toString() pure const { return "!"~expr.toString(); }
 }
 
 abstract class BinaryExpr : Expr {
@@ -390,20 +397,21 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                 const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
                     enforce(ap.ident, "dynamic attributes not allowed in inherit");
-                    enforce(ap.ident !in binds.attrs, "attribute already defined");
+                    enforceAttr(ap.ident !in binds.attrs, [ap]);
                     // FIXME: use loc from AttrPath
-                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprSelect(loc,
-                            expr, [
-                                ap
-                            ]), true);
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(
+                        new ExprSelect(loc, expr, [ap]),
+                        true); // inherited
                 }
             } else {
                 const loc = input.front.loc;
                 foreach (ap; parseAttrs(input)) {
                     enforce(ap.ident, "dynamic attributes not allowed in inherit");
-                    enforce(ap.ident !in binds.attrs, "attribute already defined");
+                    enforceAttr(ap.ident !in binds.attrs, [ap]);
                     // FIXME: use loc from AttrPath
-                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(new ExprVar(loc, ap.ident), true);
+                    binds.attrs[ap.ident] = ExprAttrs.AttrDef(
+                        new ExprVar(loc, ap.ident),
+                        true); // inherited
                 }
             }
             break;
@@ -1074,15 +1082,24 @@ private AttrPath parseAttrPath(R)(ref R input) pure if (isTokenRange!R) {
     }
 }
 
+private void enforceAttr(T)(in T test, AttrPath ap) pure {
+    string str;
+    foreach (i, an; ap) {
+        if (i) str ~= '.';
+        str ~= an.toString();
+    }
+    enforce(test, "attribute '"~str~"' already defined");
+}
+
 private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
     assert(ap.length > 0);
     foreach (i; ap[0 .. $ - 1]) {
         if (i.ident) {
             const j = i.ident in attrs.attrs;
             if (j) {
-                assert(!j.inherited);
+                enforceAttr(!j.inherited, ap);
                 attrs = cast(ExprAttrs) j.value;
-                assert(attrs);
+                enforceAttr(attrs, ap);
             } else {
                 auto nested = new ExprAttrs(e.loc);
                 attrs.attrs[i.ident] = ExprAttrs.AttrDef(nested);
@@ -1100,12 +1117,12 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
         const j = i.ident in attrs.attrs;
         if (j) {
             auto ae = cast(ExprAttrs) e;
-            assert(ae);
+            enforceAttr(ae, ap);
             auto jAttrs = cast(ExprAttrs) j.value;
-            assert(jAttrs);
+            enforceAttr(jAttrs, ap);
             foreach (k, v; ae.attrs) {
                 const j2 = k in jAttrs.attrs;
-                assert(!j2); // Attr already defined in jAttrs, error.
+                enforceAttr(!j2, ap); // Attr already defined in jAttrs, error.
                 jAttrs.attrs[k] = v;
             }
         } else {

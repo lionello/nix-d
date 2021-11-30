@@ -61,7 +61,7 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
                 auto j = formal.name in attrs;
                 if (!j) {
                     enforce!TypeException(formal.def, "Lambda called without required argument "~formal.name);
-                    env2.vars[formal.name] = maybeThunk(formal.def, env2).dup;
+                    env2.vars[formal.name] = new Value(formal.def, env2);
                 } else {
                     attrsUsed++;
                     env2.vars[formal.name] = *j;
@@ -479,10 +479,16 @@ class Evaluator : ConstVisitors {
     ref Value lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
             // debug writeln("lookupVarx ", name, curEnv.vars);
-            if (curEnv.hasWith && !curEnv.vars) {
-                curEnv.vars = eval(curEnv.hasWith, *curEnv.up).attrs;
-            }
             auto v = name in curEnv.vars;
+            if (v)
+                return **v;
+        }
+        for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
+            // debug writeln("lookupVary ", name, curEnv.withVars);
+            if (curEnv.hasWith && !curEnv.withVars) {
+                curEnv.withVars = eval(curEnv.hasWith, *curEnv.up).attrs;
+            }
+            auto v = name in curEnv.withVars;
             if (v)
                 return **v;
         }
@@ -569,14 +575,13 @@ class Evaluator : ConstVisitors {
             // The recursive attributes are evaluated in the new
             // environment, while the inherited attributes are evaluated
             // in the original environment.
-            foreach (k, ref v; expr.attrs) {
-                if (hasOverrides && !v.inherited) {
-                    attrs[k] = new Value(v.value, newEnv);
+            foreach (k, v; expr.attrs) {
+                if (v.inherited) {
+                    attrs[k] = maybeThunk(v.value, env).dup;
                 } else {
-                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv).dup;
+                    attrs[k] = new Value(v.value, newEnv);
                 }
             }
-            // debug writeln(__LINE__, newEnv.vars);
 
             // If the rec contains an attribute called `__overrides', then
             // evaluate it, and add the attributes in that set to the rec.
@@ -596,8 +601,9 @@ class Evaluator : ConstVisitors {
             dynamicEnv = newEnv;
             // assert(dynamicEnv.vars is attrs);
         } else {
-            foreach (k, attr; expr.attrs) {
-                attrs[k] = maybeThunk(attr.value, env).dup;
+            foreach (k, v; expr.attrs) {
+                // attrs[k] = new Value(v.value, env);
+                attrs[k] = maybeThunk(v.value, env).dup;
             }
         }
         // Dynamic attrs apply *after* rec and __overrides.
@@ -628,8 +634,15 @@ class Evaluator : ConstVisitors {
     void visit(in ExprLet expr) {
         // Create a new environment that contains the attributes in this `let'.
         auto newEnv = new Env(env);
+        // The recursive attributes are evaluated in the new environment,
+        // while the inherited attributes are evaluated in the original
+        // environment.
         foreach (k, attr; expr.attrs.attrs) {
-            newEnv.vars[k] = maybeThunk(attr.value, attr.inherited ? env : newEnv).dup;
+            if (attr.inherited) {
+                newEnv.vars[k] = maybeThunk(attr.value, env).dup;
+            } else {
+                newEnv.vars[k] = new Value(attr.value, newEnv);
+            }
         }
         env = newEnv;
         visit(expr.body);

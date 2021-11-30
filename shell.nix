@@ -1,9 +1,9 @@
 with import <nixpkgs> {};
 mkShell {
   buildInputs = [
-    dmd
+    #dmd
     rdmd
     dub
-    #ldc
+    ldc
   ];
 }

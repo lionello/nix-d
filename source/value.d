@@ -48,6 +48,7 @@ struct Env {
     Env* up;
     Bindings vars;
     const(Expr) hasWith;
+    Bindings withVars;
     debug Value[const(Expr)] cache;//temp
 }
 
@@ -159,7 +160,7 @@ struct Value {
     // }
 
     this(String str) pure {
-        this(str.raw, this.context);
+        this(str.raw, str.context);
     }
 
     this(string str, in PathSet context) pure {
@@ -241,7 +242,7 @@ struct Value {
         return type == Type.String ? s.raw : (type == Type.Path ? p : null);
     }
 
-    private @property real _number() @nogc pure const nothrow {
+    @property real _number() @nogc pure const nothrow {
         return type == Type.Int ? i : (type == Type.Float ? f : real.nan);
     }
 

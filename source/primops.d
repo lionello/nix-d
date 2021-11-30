@@ -53,6 +53,37 @@ private Value all(ref Value fun, ref Value list) /*pure*/ {
     return Value.TRUE;
 }
 
+private Value appendContext(ref Value s, ref Value ctx) {
+    const orig = forceValue(s);
+    auto context = orig.context.dupx;
+    foreach (name, v; forceValue(ctx).attrs) {
+        // assert(state.store->isStorePath(name));
+        auto attrs = forceValue(*v).attrs;
+
+        auto path = "path" in attrs;
+        if (path && forceValue(**path).boolean) {
+            context[name] = true;
+        }
+
+        auto allOutputs = "allOutputs" in attrs;
+        if (allOutputs && forceValue(**allOutputs).boolean) {
+            // assert(isDerivation(name));
+            context["=" ~ name] = true;
+        }
+
+        auto outputs = "outputs" in attrs;
+        if (outputs) {
+            auto list = forceValue(**outputs).list;
+            // assert(!list.length || isDerivation(name));
+            foreach (v; list) {
+                auto n = forceStringNoCtx(*v);
+                context["!" ~ n ~ "!" ~ name] = true;
+            }
+        }
+    }
+    return Value(orig.str, context);
+}
+
 private Value binOp(string OP)(ref Value lhs, ref Value rhs) /*pure*/ {
     return forceValue(lhs).opBinary!OP(forceValue(rhs));
 }
@@ -285,9 +316,18 @@ private Value import_(ref Value filename) /*pure*/ {
     return eval(parse(s));
 }
 
+private string didYouMean(string s, Bindings b) {
+    import std.algorithm.comparison : levenshteinDistance;
+    foreach (k, v; b) {
+        debug writeln(k);
+        if (levenshteinDistance(s, k) == 1) return "; did you mean: " ~ k;
+    }
+    return "";
+}
+
 private Value getAttr(ref Value name, ref Value attrs) {
     auto ptr = forceStringNoCtx(name) in forceValue(attrs).attrs;
-    enforce!EvalException(ptr, "attribute '"~name.str~"' missing");
+    enforce!EvalException(ptr, "attribute '"~name.str~"' missing" ~ didYouMean(name.str, attrs.attrs));
     return **ptr;
 }
 
@@ -487,6 +527,10 @@ private Value derivationStrict(ref Value attrs) {
         if (key == "__ignoreNulls") continue;
         auto s = coerceToString(*drvAttrs[key], true);
         drv ~= s;
+        if (key == "outputs") {
+            import std.array : split;
+            outputs = s.raw.split; // tokenizeString
+        }
         // Append to context
         foreach (path, _; s.context) {
             context[path] = true;
@@ -525,6 +569,16 @@ private Value filter(ref Value fun, ref Value list) {
     return Value(output);
 }
 
+private Value ceil(ref Value f) {
+    import std.math.rounding : ceil;
+    return Value(ceil(forceValue(f)._number));
+}
+
+private Value floor(ref Value f) {
+    import std.math.rounding : floor;
+    return Value(floor(forceValue(f)._number));
+}
+
 static this() {
     import core.stdc.time : time;
 
@@ -553,7 +607,7 @@ static this() {
         // "__addErrorContext" : ni!"__addErrorContext",
         "__all" : wrap!all,
         "__any" : wrap!any,
-        // "__appendContext" : ni!"__appendContext",//noctx
+        "__appendContext" : wrap!appendContext,//noctx
         "__attrNames" : wrap!attrNames,
         "__attrValues" : wrap!attrValues,
         "baseNameOf" : wrap!baseNameOf,
@@ -561,6 +615,7 @@ static this() {
         "__bitOr" :  wrap!(binOp!"|"),
         "__bitXor" :  wrap!(binOp!"^"),
         "__catAttrs" : wrap!catAttrs,
+        "ceil": wrap!ceil,
         // "__compareVersions" : ni!"__compareVersions",//noctx
         "__concatLists" : wrap!concatLists,
         "__concatMap" : wrap!concatMap,
@@ -581,6 +636,7 @@ static this() {
         "__filter" : wrap!filter,
         // "__filterSource" : ni!"__filterSource",
         // "__findFile" : ni!"__findFile",
+        "floor": wrap!floor,
         "__foldl'" : wrap!foldl_,
         "__fromJSON" : wrap!fromJSON,
         // "fromTOML" : ni!"fromTOML",

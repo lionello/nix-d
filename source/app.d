@@ -44,6 +44,7 @@ void main(string[] args) {
         }
         catch (Exception e) {
             writeln("Failed: ", e);
+            break;
         }
         // writeln("Done.");
     }
