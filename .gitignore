@@ -17,3 +17,4 @@ nix-d-test-*
 main
 lexer
 .vscode
+.direnv/
