@@ -2,7 +2,7 @@ with import <nixpkgs> {};
 mkShell {
   buildInputs = [
     #dmd
-    rdmd
+    dtools
     dub
     ldc
   ];
