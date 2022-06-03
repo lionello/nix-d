@@ -21,18 +21,41 @@ template ConstVisitorT(T...) {
     }
 }
 
+abstract class Visitable {
+    void accept(Visitor v) { const t = this; t.accept(v); }
+    void accept(Visitor) const { assert(0, "No visit method found for "~this.classinfo.name); }
+}
+
 template Accept() {
     override void accept(Visitor v) {
+        debug import std.stdio : writeln;
+        debug scope(failure) writeln("while visiting ", this);
         auto visitorT = cast(VisitorT!(typeof(this))) v;
         return visitorT ? visitorT.visit(this) : super.accept(v);
     }
     override void accept(Visitor v) const {
+        debug import std.stdio : writeln;
+        debug scope(failure) writeln("while visiting ", this);
         auto visitorT = cast(VisitorT!(typeof(this))) v;
         return visitorT ? visitorT.visit(this) : super.accept(v);
     }
 }
 
-abstract class Visitable {
-    void accept(Visitor v) { const t = this; t.accept(v); }
-    void accept(Visitor) const { assert(0, "No visit method found for "~this.classinfo.name); }
+unittest {
+    class Base : Visitable {
+    }
+    class Derived : Base {
+        mixin Accept;
+    }
+    class Visitor : ConstVisitorT!Derived {
+        bool visited;
+        bool test(in Base b) {
+            b.accept(this);
+            return visited;
+        }
+        protected override void visit(in Derived d) {
+            visited = true;
+        }
+    }
+    assert(new Visitor().test(new Derived()));
 }
