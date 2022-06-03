@@ -2,6 +2,7 @@ module nix.evaluator;
 
 public import nix.value;
 import nix.primops : baseEnv;
+import nix.visitor : ConstVisitorT;
 
 debug import std.stdio : writeln;
 
