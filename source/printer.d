@@ -73,31 +73,31 @@ unittest {
     static assert(escapeString("x\\$\"\n\t\r") == `"x\\\$\"\n\t\r"`);
 }
 
+immutable string[Tok] tokToString;
+
+shared static this() {
+    tokToString = [
+        Tok.APP: " ",
+        Tok.CONCAT: " ++ ",
+        Tok.MUL: " * ",
+        Tok.DIV: " / ",
+        Tok.ADD: " + ",
+        Tok.NEGATE: "-",
+        Tok.SUB: " - ",
+        Tok.UPDATE: " // ",
+        Tok.LT: " < ",
+        Tok.LEQ: " <= ",
+        Tok.GT: " > ",
+        Tok.GEQ: " >= ",
+        Tok.EQ: " == ",
+        Tok.NEQ: " != ",
+        Tok.AND: " && ",
+        Tok.OR: " || ",
+        Tok.IMPL: " -> ",
+    ];
+}
+
 private class Printer(W) if (isStringWriter!W) : ConstVisitors {
-    private static immutable string[Tok] ops;
-
-    shared static this() {
-        ops = [
-            Tok.APP: " ",
-            Tok.CONCAT: " ++ ",
-            Tok.MUL: " * ",
-            Tok.DIV: " / ",
-            Tok.ADD: " + ",
-            Tok.NEGATE: "-",
-            Tok.SUB: " - ",
-            Tok.UPDATE: " // ",
-            Tok.LT: " < ",
-            Tok.LEQ: " <= ",
-            Tok.GT: " > ",
-            Tok.GEQ: " >= ",
-            Tok.EQ: " == ",
-            Tok.NEQ: " != ",
-            Tok.AND: " && ",
-            Tok.OR: " || ",
-            Tok.IMPL: " -> ",
-        ];
-    }
-
     private W writer;
 
     void write(string s) {
@@ -133,7 +133,7 @@ private class Printer(W) if (isStringWriter!W) : ConstVisitors {
     void visit(in ExprBinaryOp e) {
         write("(");
         visit(e.left);
-        write(ops[e.op]);
+        write(tokToString[e.op]);
         visit(e.right);
         write(")");
     }
