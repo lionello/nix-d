@@ -18,3 +18,4 @@ main
 lexer
 .vscode
 .direnv/
+lib.nix
