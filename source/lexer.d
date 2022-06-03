@@ -101,6 +101,11 @@ enum Tok {
 /// Location in source file
 struct Loc {
     uint line;//, column;
+
+    string toString() const @safe pure nothrow {
+        import std.conv : to;
+        return "line "~to!string(line);
+    }
 }
 
 /// A lexed token
@@ -111,7 +116,7 @@ struct Token {
 }
 
 // From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L91
-private bool isIdChar(dchar d) pure {
+private bool isIdChar(dchar d) @safe @nogc pure nothrow {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
@@ -126,7 +131,7 @@ private bool isIdChar(dchar d) pure {
 }
 
 // From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
-private bool isUriSchemeChar(dchar d) pure {
+private bool isUriSchemeChar(dchar d) @safe @nogc pure nothrow {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
@@ -141,7 +146,7 @@ private bool isUriSchemeChar(dchar d) pure {
 }
 
 // From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L97
-private bool isUriPathChar(dchar d) pure {
+private bool isUriPathChar(dchar d) @safe @nogc pure nothrow {
     switch (d) {
     case '!':
     case '$': .. case '\'':
@@ -162,7 +167,7 @@ private bool isUriPathChar(dchar d) pure {
 }
 
 // From https://github.com/NixOS/nix/blob/d048577909e383439c2549e849c5c2f2016c997e/src/libexpr/lexer.l#L94
-private bool isPathChar(dchar d) pure {
+private bool isPathChar(dchar d) @safe @nogc pure nothrow {
     switch (d) {
     case 'a': .. case 'z':
     case 'A': .. case 'Z':
