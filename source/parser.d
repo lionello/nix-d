@@ -363,8 +363,7 @@ private ExprAttrs parseBinds(R)(ref R input) pure if (isTokenRange!R) {
                     enforceAttr(ap.ident !in binds.attrs, [ap]);
                     // FIXME: use loc from AttrPath
                     binds.attrs[ap.ident] = ExprAttrs.AttrDef(
-                        new ExprSelect(loc, expr, [ap]),
-                        true); // inherited
+                        new ExprSelect(loc, expr, [ap])); // not "inherited"
                 }
             } else {
                 const loc = input.front.loc;
