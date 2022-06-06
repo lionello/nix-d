@@ -49,7 +49,7 @@ private auto precedence(Tok tok) pure @safe {
     case Tok.IMPL:
         return Precedence(1, Associativity.RIGHT);
     default:
-        import std.conv: text;
+        import std.conv : text;
         assert(0, "no precedence for op "~text(tok));
     }
 }
@@ -73,4 +73,23 @@ Associativity associativity(Tok left, Tok right) pure @safe {
     assert(associativity(Tok.SUB, Tok.SUB) == Associativity.LEFT);
     assert(associativity(Tok.ADD, Tok.MUL) == Associativity.RIGHT);
     assert(associativity(Tok.CONCAT, Tok.CONCAT) == Associativity.RIGHT);
+}
+
+auto infixBindingPower(Tok tok) pure @safe {
+    struct Power {
+        int left, right;
+    }
+    const precedence = tok.precedence;
+    auto power = Power(precedence.prec*2, precedence.prec*2);
+    final switch (precedence.assoc) {
+    case Associativity.LEFT:
+        power.right++;
+        break;
+    case Associativity.RIGHT:
+        power.left++;
+        break;
+    case Associativity.NONE:
+        break;
+    }
+    return power;
 }

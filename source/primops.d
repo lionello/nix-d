@@ -1,14 +1,17 @@
 module nix.primops;
 
-debug import std.stdio:writeln;
+debug import std.stdio : writeln;
+import std.exception : enforce;
 
 import nix.value, nix.evaluator;
+import nix.path;
 
 class AbortException : Exception {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
         super("evaluation aborted with the following error message: "~msg, file, line);
     }
 }
+
 
 class ThrownException : AssertionException {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
@@ -57,26 +60,27 @@ private Value appendContext(ref Value s, ref Value ctx) {
     const orig = forceValue(s);
     auto context = orig.context.dupx;
     foreach (name, v; forceValue(ctx).attrs) {
-        // assert(state.store->isStorePath(name));
+        enforce!EvalException(isStorePath(name), "Context key '"~name~"' is not a store path");
         auto attrs = forceValue(*v).attrs;
 
-        auto path = "path" in attrs;
-        if (path && forceValue(**path).boolean) {
-            context[name] = true;
+        if (auto path = "path" in attrs) {
+            if (forceValue(**path).boolean) {
+                context[name] = true;
+            }
         }
 
-        auto allOutputs = "allOutputs" in attrs;
-        if (allOutputs && forceValue(**allOutputs).boolean) {
-            // assert(isDerivation(name));
-            context["=" ~ name] = true;
+        if (auto allOutputs = "allOutputs" in attrs) {
+            if (forceValue(**allOutputs).boolean) {
+                enforce!EvalException(isDerivation(name), "Tried to add all-outputs context of "~name~", which is not a derivation, to a string");
+                context["=" ~ name] = true;
+            }
         }
 
-        auto outputs = "outputs" in attrs;
-        if (outputs) {
+        if (auto outputs = "outputs" in attrs) {
             auto list = forceValue(**outputs).list;
             // assert(!list.length || isDerivation(name));
-            foreach (v; list) {
-                auto n = forceStringNoCtx(*v);
+            foreach (vv; list) {
+                auto n = forceStringNoCtx(*vv);
                 context["!" ~ n ~ "!" ~ name] = true;
             }
         }
@@ -199,7 +203,7 @@ private Value toJSON(ref Value v) {
             auto s = tryAttrsToString(v, false, false);
             if (s !is null) return escapeString(s);
             auto obj = "{";
-            foreach (k; lexicographicOrder(v.attrs)) {
+            foreach (k; v.attrs.lexicographicOrder) {
                 if (obj.length>1) obj ~= ',';
                 obj ~= escapeString(k);
                 obj ~= ":";
@@ -304,8 +308,7 @@ private Value intersectAttrs(ref Value e1, ref Value e2) {
     forceValue(e2);
     Bindings set;
     foreach (k, v; e1.attrs) {
-        auto j = k in e2.attrs;
-        if (j) set[k] = *j;
+        if (auto j = k in e2.attrs) set[k] = *j;
     }
     return Value(set);
 }
@@ -313,13 +316,12 @@ private Value intersectAttrs(ref Value e1, ref Value e2) {
 private Value import_(ref Value filename) /*pure*/ {
     import std.file : readText;
     auto s = readText(coerceToPath(filename));
-    return eval(parse(s));
+    return eval(parseAndBind(s));
 }
 
-private string didYouMean(string s, Bindings b) {
+private string didYouMean(string s, in Bindings b) {
     import std.algorithm.comparison : levenshteinDistance;
     foreach (k, v; b) {
-        debug writeln(k);
         if (levenshteinDistance(s, k) == 1) return "; did you mean: " ~ k;
     }
     return "";
@@ -331,23 +333,75 @@ private Value getAttr(ref Value name, ref Value attrs) {
     return **ptr;
 }
 
+private auto decodeContext(in string s) {
+    struct NixStringContextElem {
+        Path first;
+        string second;
+    }
+    if (s[0] == '!') {
+        import std.string : indexOf;
+        const i = s.indexOf('!', 1);
+        return NixStringContextElem(parseStorePath(s[i+1..$]), s[1..i]);
+    } else {
+        auto path = s[0] == '/' ? s : s[1..$];
+        return NixStringContextElem(parseStorePath(path), "");
+    }
+}
+
 private Value getContext(ref Value str) {
+    struct ContextInfo {
+        bool path;
+        bool allOutputs;
+        string[] outputs;
+    }
+    ContextInfo[Path] contextInfos;
     auto context = forceValue(str).context;
+    foreach (p, v; context) {
+        string drv, output;
+        string path = p;
+        if (p[0] == '=') {
+            drv = path = p[1..$];
+        } else if (p[0] == '!') {
+            auto ctx = decodeContext(p);
+            drv = printStorePath(ctx.first);
+            output = ctx.second;
+            path = drv;
+        }
+        auto isPath = drv.length == 0;
+        auto isAllOutputs = drv.length != 0 && output.length == 0;
+        if (auto j = path in contextInfos) {
+            if (isPath) {
+                j.path = true;
+            } else if (isAllOutputs) {
+                j.allOutputs = true;
+            } else {
+                j.outputs ~= output;
+            }
+        } else {
+            contextInfos[path] = ContextInfo(isPath, isAllOutputs, output ? [output] : []);
+        }
+    }
+
     Bindings attrs;
-    foreach (k, v; context) {
-        Bindings infoVal;
-        // infoVal["path"] = new Value(true);
-        // infoVal["allOutputs"] = new Value(true);
-        Value*[] outputs;
-        infoVal["outputs"] = new Value(outputs);
-        attrs[k] = new Value(infoVal);
+    foreach (path, info; contextInfos) {
+        Bindings infoAttrs;
+        if (info.path) infoAttrs["path"] = new Value(true);
+        if (info.allOutputs) infoAttrs["allOutputs"] = new Value(true);
+        if (info.outputs) {
+            Value*[] outputs;
+            foreach (output; info.outputs) {
+                outputs ~= new Value(output, null);
+            }
+            infoAttrs["outputs"] = new Value(outputs);
+        }
+        attrs[path] = new Value(infoAttrs);
     }
     return Value(attrs);
 }
 
 private Value getEnv(ref Value str) {
     auto name = forceStringNoCtx(str);
-    import std.process: environment;
+    import std.process : environment;
     return Value(environment.get(name, ""), null);
 }
 
@@ -399,8 +453,8 @@ private Value tail(ref Value list) {
 }
 
 private Value dirOf(ref Value file) {
-    import std.path : dirName;
-    const dir = dirName(coerceToString(file, false, false));
+    import nix.path : dirOf;
+    const dir = dirOf(coerceToString(file, false, false));
     return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
@@ -439,8 +493,8 @@ private Value genericClosure(ref Value attr) {
 }
 
 private Value baseNameOf(ref Value file) {
-    import std.path : baseName;
-    const dir = baseName(coerceToString(file, false, false));
+    import nix.path : baseNameOf;
+    const dir = baseNameOf(coerceToString(file, false, false));
     return file.type == Type.Path ? Value(dir) : Value(dir, file.context.dupx);
 }
 
@@ -547,7 +601,8 @@ private Value derivationStrict(ref Value attrs) {
     Bindings v;
     v["drvPath"] = new Value(drvPathS, ["="~drvPathS:true]);
     foreach (i; outputs) {
-        v[i] = new Value(storeDir~"/"~hash~"-"~name, ["!"~i~"!"~drvPath:true]);
+        auto outputPath = hash~"-"~name;
+        v[i] = new Value(printStorePath(outputPath), ["!"~i~"!"~drvPathS:true]);
     }
     return Value(v);
 }
@@ -579,7 +634,7 @@ private Value floor(ref Value f) {
     return Value(floor(forceValue(f)._number));
 }
 
-static this() {
+ref Env createBaseEnv() {
     import core.stdc.time : time;
 
     static Value notImplemented(string S)(Value*[] args...) /*pure*/ {
@@ -601,6 +656,7 @@ static this() {
         return new Value(&primop);
     }
 
+    auto derivation = new Value;
     Bindings globals = [
         "abort" : wrap!abort,
         "__add" : wrap!(binOp!"+"),
@@ -621,8 +677,9 @@ static this() {
         "__concatMap" : wrap!concatMap,
         "__concatStringsSep" : wrap!concatStringsSep,
         "__currentSystem" : new Value("x86_64-darwin", null), // impure
-        "__currentTime" : new Value(time(null)), // impure
+        "__currentTime" : new Value(time(null)), // impure FIXME: make lazy
         "__deepSeq" : wrap!deepSeq,
+        "derivation": derivation,
         "derivationStrict" : wrap!derivationStrict,
         "dirOf" : wrap!dirOf,
         "__div" : wrap!(binOp!"/"),
@@ -670,7 +727,7 @@ static this() {
         // "__mapAttrs" : ni!"__mapAttrs",
         // "__match" : ni!"__match", //noctx
         "__mul" : wrap!(binOp!"*"),
-        "__nixPath" : new Value(cast(Value*[])[]), //impure
+        "__nixPath" : new Value(cast(Value*[])[]), //[{path="";prefix="";}] impure
         "__nixVersion" : new Value("2.3.4", null), //baseEnv
         "null" : new Value,
         // "__parseDrvName" : ni!"__parseDrvName", //noctx
@@ -710,26 +767,22 @@ static this() {
 
     Bindings builtins;
     foreach (k, v; globals) {
-        import std.string : strip;
-        builtins[strip(k, "_")] = v;
+        builtins[k[0..2]=="__"?k[2..$]:k] = v;
     }
     globals["builtins"] = builtins["builtins"] = new Value(builtins);
 
-    staticBaseEnv.vars = globals;
-
-    baseEnv.up = &staticBaseEnv;
+    auto baseEnv = new Env(null, globals);
+    /* Note: we have to initialize the 'derivation' constant *after*
+       building baseEnv/staticBaseEnv because it uses 'builtins'. */
     immutable derivationNix = import("derivation.nix");
-    baseEnv.vars["derivation"] = eval(parse(derivationNix), staticBaseEnv).dup;
+    *derivation = eval(parseAndBind(derivationNix, *baseEnv), *baseEnv);
+
+    return *baseEnv;
 }
 
-Env staticBaseEnv;
-Env baseEnv;
-
 unittest {
-    assert(staticBaseEnv.up is null);
-    assert(staticBaseEnv.vars["builtins"].type == Type.Attrs);
-    assert(staticBaseEnv.vars["builtins"].attrs["builtins"].type == Type.Attrs);
-
-    assert(baseEnv.up is &staticBaseEnv);
+    auto baseEnv = createBaseEnv();
+    assert(baseEnv.vars["builtins"].type == Type.Attrs);
+    assert(baseEnv.vars["builtins"].attrs["builtins"].type == Type.Attrs);
     assert(baseEnv.vars["derivation"].type == Type.Lambda);
 }

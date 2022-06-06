@@ -1,10 +1,12 @@
 module nix.evaluator;
 
 public import nix.value;
-import nix.primops : baseEnv;
+import nix.primops : createBaseEnv;
 import nix.visitor : ConstVisitorT;
+import nix.path;
 
 debug import std.stdio : writeln;
+import std.exception : enforce;
 
 class EvalException : Exception {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
@@ -15,12 +17,6 @@ class EvalException : Exception {
 class AssertionException : EvalException {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
         super("assertion "~msg~" failed", file, line);
-    }
-}
-
-class UndefinedVarException : EvalException {
-    this(string name, string file = __FILE__, size_t line = __LINE__) pure {
-        super("undefined variable "~name, file, line);
     }
 }
 
@@ -59,13 +55,12 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
             // argument has a default, use the default.
             int attrsUsed;
             foreach (formal; f.lambda.formals.elems) {
-                auto j = formal.name in attrs;
-                if (!j) {
-                    enforce!TypeException(formal.def, "Lambda called without required argument "~formal.name);
-                    env2.vars[formal.name] = new Value(formal.def, env2);
-                } else {
+                if (auto j = formal.name in attrs) {
                     attrsUsed++;
                     env2.vars[formal.name] = *j;
+                } else {
+                    enforce!TypeException(formal.def, "Lambda called without required argument "~formal.name);
+                    env2.vars[formal.name] = new Value(formal.def, env2);
                 }
             }
             if (!f.lambda.formals.ellipsis && attrsUsed != attrs.length) {
@@ -80,7 +75,7 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
     }
 }
 
-ref Value forceValueDeep(ref Value value) {
+ref Value forceValueDeep(return ref Value value) {
     // debug writeln("forceValueDeep ", value);
     forceValue(value);
     switch (value.type) {
@@ -104,18 +99,17 @@ ref Value forceValueDeep(ref Value value) {
     return value;
 }
 
-ref Value forceValue(ref Value value, in Loc pos = Loc()) {
-    // debug writeln("forceValue ", value);
+ref Value forceValue(return ref Value value, in Loc pos = Loc()) {
+    debug writeln("forceValue ", value);
     switch (value.type) {
     // case Type.Ref:
     //     value = forceValue(value.deref);
     //     break;
     case Type.Thunk:
-        auto thunk = value.thunk;
+        auto expr = value.thunk;
         auto env = value.env;
         value = Value(double.nan); // avoid infinite recursion
-        // scope (failure)
-        value = eval(thunk, *env);
+        value = eval(expr, *env);
         break;
     case Type.PrimOp:
         value = value.primOp()();
@@ -155,7 +149,7 @@ String tryAttrsToString(ref Value value, bool coerceMore, bool copyToStore) {
     return coerceToString(str, coerceMore, copyToStore);
 }
 
-String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore = true) /*pure*/ {
+String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore = true) {
     forceValue(value);
     switch (value.type) {
     case Type.String:
@@ -166,8 +160,7 @@ String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore
     case Type.Attrs:
         auto s = tryAttrsToString(value, coerceMore, copyToStore);
         if (s !is null) return s;
-        auto outPath = "outPath" in value.attrs;
-        if (outPath) {
+        if (auto outPath = "outPath" in value.attrs) {
             return coerceToString(**outPath, coerceMore, copyToStore);
         }
         break;
@@ -203,42 +196,24 @@ unittest {
 
 string coerceToPath(ref Value v) {
     const path = coerceToString(v, false, false);
-    enforce!EvalException(path != "" && path[0] == '/', "string "~path~" doesn't represent an absolute path");
+    enforce!EvalException(path != "" && path[0] == '/', "string '"~path~"' doesn't represent an absolute path");
     // FIXME: don't discard context
     return path;
 }
 
-private string absPath(string path) @safe {
-    assert(path != "");
-    if (path[0] == '~') {
-        import std.path : expandTilde;
-        path = expandTilde(path);
-    }
-    if (path[0] != '/') {
-        import std.path : absolutePath;
-        path = absolutePath(path);
-    }
-    return canonPath(path);
+private String copyPathToStore(Path path) {
+    import nix.path: isDerivation;
+    enforce!EvalException(!isDerivation(path), "file names are not allowed to end in '"~drvExtension~"'");
+    auto dstPath = printStorePath(computeStorePathForPath(baseNameOf(path), path));
+    return String(dstPath, [dstPath:true]);
 }
 
-immutable storeDir = "/nix/store";
-// immutable drvExtension = ".drv";
-
-private String copyPathToStore(Path path) @safe {
-    import std.path : baseName;
-    return String(computeStorePathForPath(baseName(path), path), [path:true]);
-}
-
-string printStorePath(string path) @safe {
-    return storeDir~"/"~path;
-}
-
-private string computeStorePathForPath(string name, Path path) @safe {
+private Path computeStorePathForPath(string name, Path path) @safe pure {
     // FIXME: implement file hashing
-    return printStorePath("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ name);
+    return "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-" ~ name;
 }
 
-private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
+private class Thunker : ConstVisitorT!(Expr, ExprInt, ExprFloat, ExprString, ExprPath, ExprVar) {
     Env *env;
     Value *value;
 
@@ -249,9 +224,9 @@ private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprSt
 
     Value* lookupVar(string name) {
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            auto v = name in curEnv.vars;
-            if (v)
+            if (auto v = name in curEnv.vars) {
                 return *v;
+            }
         }
         return null;
     }
@@ -260,31 +235,27 @@ private class Thunker : ConstVisitorT!(Expr, ExprNop, ExprInt, ExprFloat, ExprSt
         value = new Value(e, env);
     }
 
-    void visit(in Expr e) {
+    override void visit(in Expr e) {
         mkThunk(e);
     }
 
-    void visit(in ExprNop e) {
-        e.expr.accept(this);
-    }
-
-    void visit(in ExprInt e) {
+    override void visit(in ExprInt e) {
         value = new Value(e.n);
     }
 
-    void visit(in ExprFloat e) {
+    override void visit(in ExprFloat e) {
         value = new Value(e.f);
     }
 
-    void visit(in ExprString e) {
+    override void visit(in ExprString e) {
         value = new Value(e.s, null);
     }
 
-    void visit(in ExprPath e) {
+    override void visit(in ExprPath e) {
         value = new Value(absPath(e.p));
     }
 
-    void visit(in ExprVar e) {
+    override void visit(in ExprVar e) {
         auto v = lookupVar(e.name);
         // The value might not be initialised in the environment yet.
         if (v) {
@@ -303,7 +274,7 @@ unittest {
     assert(thunker.value.thunk);
 }
 
-bool isDerivation(ref Value v) {
+private bool isDerivation(ref Value v) {
     if (v.type != Type.Attrs) return false;
     auto type = "type" in v.attrs;
     return type && forceValue(**type).type == Type.String && (*type).str == "derivation";
@@ -328,6 +299,7 @@ bool eqValues(ref Value lhs, ref Value rhs) {
         if (l.attrs.length != r.attrs.length) return false;
         foreach (k, p; l.attrs) {
             auto pp = k in r.attrs;
+            debug writeln("comparing ", k, ": ", p, " vs ", pp);
             if (pp is null || !eqValues(*p, **pp)) return false;
         }
         return true;
@@ -336,6 +308,7 @@ bool eqValues(ref Value lhs, ref Value rhs) {
         return l == r;
     }
 }
+
 
 class Evaluator : ConstVisitors {
     Env* env;
@@ -351,15 +324,13 @@ class Evaluator : ConstVisitors {
         return *value;
     }
 
-    void visit(in ExprNop expr) {
-        visit(expr.expr);
-    }
-
     void visit(in ExprOpNot expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(!visit(expr.expr).boolean);
     }
 
     void visit(in ExprBinaryOp expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         switch (expr.op) {
         case Tok.AND:
             if (visit(expr.left).boolean)
@@ -478,41 +449,52 @@ class Evaluator : ConstVisitors {
     }
 
     ref Value lookupVar(string name) {
+        /* Check whether the variable appears in the environment. */
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            // debug writeln("lookupVarx ", name, curEnv.vars);
-            auto v = name in curEnv.vars;
-            if (v)
+            debug writeln("lookupVar ", name, " in env ", curEnv.vars);
+            if (auto v = name in curEnv.vars) {
+                // fromWith = false;
                 return **v;
+            }
         }
+        /* Otherwise, the variable must be obtained from the nearest
+        enclosing `with'.  If there is no `with', then we can issue an
+        "undefined variable" error now. */
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            // debug writeln("lookupVary ", name, curEnv.withVars);
+            debug writeln("lookupVar(with) ", name, curEnv.withVars);
             if (curEnv.hasWith && !curEnv.withVars) {
                 curEnv.withVars = eval(curEnv.hasWith, *curEnv.up).attrs;
             }
-            auto v = name in curEnv.withVars;
-            if (v)
+            if (auto v = name in curEnv.withVars) {
+                // fromWith = true;
                 return **v;
+            }
         }
         throw new UndefinedVarException(name);
     }
 
     void visit(in ExprInt expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.n);
     }
 
     void visit(in ExprFloat expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.f);
     }
 
     void visit(in ExprString expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.s, null);
     }
 
     void visit(in ExprPath expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(absPath(expr.p));
     }
 
     void visit(in ExprVar expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = &forceValue(lookupVar(expr.name), expr.loc);
     }
 
@@ -525,35 +507,42 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprSelect expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         visit(expr.left);
+        debug writeln("after expr.left=",*value, " for ", expr.ap);
         foreach (a; expr.ap) {
+            scope(failure) writeln("while evaluating the attribute ", a, " on ", expr.loc);
             const name = getName(a);
-            forceValue(*value, expr.loc);
+            forceValue(*value, expr.loc); // TODO: use pos from attr 'a'
+            debug writeln("look for ", name, " in ", *value);
             if (value.type == Type.Attrs) {
-                auto j = name in value.attrs;
-                if (j) {
+                if (auto j = name in value.attrs) {
+                    debug writeln(" found ", name, ": ", **j, (*j).type == Type.Thunk ? (*j).env.vars : null);
                     value = *j;
                     continue;
                 }
             }
             if (expr.def) {
+                debug writeln("defaulting to ", expr.def);
                 visit(expr.def);
                 break;
             }
-            import nix.printer:format;
-            debug writeln(format(expr), expr.ap, *value);
-            throw new EvalException("attribute missing: " ~ name);
+            import nix.printer : format;
+            debug writeln(format(expr), expr.ap, "=", *value);
+            throw new EvalException("attribute '"~name~"' missing");
         }
-        forceValue(*value, Loc()); // TODO: use pos from attr 'j'
+        scope(failure) writeln("while evaluating the attribute path ", expr.ap.toString(), " on ", expr.loc);
+        forceValue(*value, expr.loc);
     }
 
     void visit(in ExprOpHasAttr expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         visit(expr.left);
         foreach (a; expr.ap) {
+            scope(failure) writeln("while evaluating the attribute ", a);
             forceValue(*value, expr.loc);
             if (value.type == Type.Attrs) {
-                auto j = getName(a) in value.attrs;
-                if (j) {
+                if (auto j = getName(a) in value.attrs) {
                     value = *j;
                     continue;
                 }
@@ -565,9 +554,11 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprAttrs expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         auto dynamicEnv = env;
         Bindings attrs = empty;
         if (expr.recursive) {
+            debug writeln("ExprAttrs (expr.recursive)");
             const hasOverrides = "__overrides" in expr.attrs;
 
             // Create a new environment that contains the attributes in this `rec'.
@@ -577,10 +568,12 @@ class Evaluator : ConstVisitors {
             // environment, while the inherited attributes are evaluated
             // in the original environment.
             foreach (k, v; expr.attrs) {
-                if (v.inherited) {
-                    attrs[k] = maybeThunk(v.value, env).dup;
-                } else {
+                debug writeln("rec ", k, " in env ", (v.inherited ? env : newEnv).vars);
+                if (hasOverrides && !v.inherited) {
                     attrs[k] = new Value(v.value, newEnv);
+                    assert(k in newEnv.vars);
+                } else {
+                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv).dup;
                 }
             }
 
@@ -600,7 +593,8 @@ class Evaluator : ConstVisitors {
                 }
             }
             dynamicEnv = newEnv;
-            // assert(dynamicEnv.vars is attrs);
+            assert(dynamicEnv.vars is attrs);
+            debug writeln("dynamicEnv is ", dynamicEnv.vars);
         } else {
             foreach (k, v; expr.attrs) {
                 // attrs[k] = new Value(v.value, env);
@@ -609,14 +603,21 @@ class Evaluator : ConstVisitors {
         }
         // Dynamic attrs apply *after* rec and __overrides.
         foreach (attr; expr.dynamicAttrs) {
+            debug writeln("dynamicAttr ", attr.name);
+            env = dynamicEnv;
             auto nameVal = visit(attr.name);
+            debug writeln("dynamicAttr ", nameVal);
+            env = dynamicEnv.up;
             forceValue(nameVal, expr.loc);
             if (nameVal.type == Type.Null) {
                 continue;
             }
-            const nameSym = nameVal.str;
+            const nameSym = forceStringNoCtx(nameVal);
             enforce!EvalException(nameSym !in attrs, "dynamic attribute already defined: "~nameSym);
             attrs[nameSym] = maybeThunk(attr.value, dynamicEnv).dup;
+        }
+        debug foreach (k, v; attrs) {
+            writeln("  ", k, " = ", *v, " in env ", v.type == Type.Thunk ? v.env.vars : cast(Bindings) null);
         }
         value = new Value(attrs);
     }
@@ -633,17 +634,14 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprLet expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         // Create a new environment that contains the attributes in this `let'.
         auto newEnv = new Env(env);
         // The recursive attributes are evaluated in the new environment,
         // while the inherited attributes are evaluated in the original
         // environment.
         foreach (k, attr; expr.attrs.attrs) {
-            if (attr.inherited) {
-                newEnv.vars[k] = maybeThunk(attr.value, env).dup;
-            } else {
-                newEnv.vars[k] = new Value(attr.value, newEnv);
-            }
+            newEnv.vars[k] = maybeThunk(attr.value, attr.inherited ? env : newEnv).dup;
         }
         env = newEnv;
         visit(expr.body);
@@ -651,7 +649,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprWith expr) {
-        // debug writeln(expr.attrs);
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         auto newEnv = new Env(env, null, expr.attrs);
         env = newEnv;
         visit(expr.body);
@@ -659,6 +657,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprIf expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         if (visit(expr.cond).boolean)
             visit(expr.then);
         else
@@ -666,18 +665,20 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprAssert expr) {
+        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         import nix.printer : format;
         enforce!AssertionException(visit(expr.cond).boolean, format(expr.cond).idup);
         visit(expr.body);
     }
 }
 
-public ref Value eval(in Expr expr, ref Env env = baseEnv) /*pure*/ {
+public ref Value eval(in Expr expr, ref Env env = createBaseEnv()) /*pure*/ {
     assert(expr);
     debug if (auto v = expr in env.cache) {
         assert(0);
         //return *v;
     }
+    debug writeln("eval ", expr, " in env ", env.vars);
     auto ev = new Evaluator(&env);
     expr.accept(ev);
     // env.cache[expr] = ev.value;
@@ -703,7 +704,7 @@ unittest {
     att.attrs["true"] = ExprAttrs.AttrDef(true_, true);
     assert(eval(att) == Value(["a": &ok, "true": new Value(true)]));
     // { a = "ok"; true = true; b = "p"; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "b"), new ExprString(L, "p"));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "p"), new ExprString(L, "b"));
     assert(eval(att) == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null)]));
     // rec { a = "ok"; true = true; b = "p"; }
     att.recursive = true;
@@ -711,7 +712,7 @@ unittest {
     att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar(L, "a"));
     assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok])); //needs `rec`
     // rec { a = "ok"; true = true; b = "p"; c = a; d = b; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "d"), new ExprVar(L, "b"));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprVar(L, "b"), new ExprString(L, "d"));
     assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok, "d": new Value("p", null)])); //needs `rec`
     assert(eval(new ExprFloat(L, 1.1)) == Value(1.1));
     assert(eval(new ExprInt(L, 42)) == Value(42));

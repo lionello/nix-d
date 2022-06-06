@@ -126,10 +126,6 @@ private class Printer(W) if (isStringWriter!W) : ConstVisitors {
         visit(e.expr);
     }
 
-    void visit(in ExprNop e) {
-        visit(e.expr);
-    }
-
     void visit(in ExprBinaryOp e) {
         write("(");
         visit(e.left);

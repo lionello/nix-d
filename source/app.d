@@ -16,7 +16,7 @@ void main(string[] args) {
         if (exists(filename.replace(".nix", ".exp-disabled"))) continue;
         writeln(filename);
         auto s = readText(filename);
-        const ast = parse(s);
+        const ast = parseAndBind(s);
         // print(ast);
         // writeln("=");
         try {
@@ -24,17 +24,17 @@ void main(string[] args) {
             value.forceValueDeep();
             if (value.type == Type.Lambda) {
                 // FIXME: read args from .flags file
-                auto lib = eval(parse("import(./lib.nix)"));
+                auto lib = eval(parseAndBind("import(./lib.nix)"));
                 auto b = Value(["lib": &lib, "xyzzy": Value("xyzzy!", null).dup]);
                 value = callFunction(value, b, Loc());
                 value.forceValueDeep();
                 value = *value.attrs["result"];
             }
-            writeln(value.toString(10));
+            writeln("Result: ", value.toString(10));
             try {
                 // Compare with .exp, if it exists
                 const exp = readText(filename.replace(".nix", ".exp")).strip();
-                auto value2 = eval(parse(exp));
+                auto value2 = eval(parseAndBind(exp));
                 value2.forceValueDeep();
                 assert(value == value2, "Expected: "~value2.toString);
             }

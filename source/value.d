@@ -1,9 +1,11 @@
 module nix.value;
 
 public import nix.parser;
+import nix.path;
 
 debug import std.stdio : writeln;
 import std.conv : text;
+import std.exception : enforce;
 
 class TypeException : Exception {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
@@ -11,19 +13,19 @@ class TypeException : Exception {
     }
 }
 
-string canonPath(string path) pure @safe {
-    assert(path != "");
-    if (path[0] != '/') {
-        throw new Exception("not an absolute path: "~path);
-    }
-    // TODO: handle links
-    import std.path : asNormalizedPath;
-    return asNormalizedPath(path).array;
-}
-
 // alias LazyValue = Value delegate(); // TODO: use this instead of thunk
 
-alias Bindings = Value*[string];
+alias Attr = Value*;
+
+// struct Attr {
+//     Value *value;
+//     Loc loc;
+//     string toString() const @safe pure {
+//         return "Attr("~value.toString()~", "~loc.toString()~")";
+//     }
+// }
+
+alias Bindings = Attr[string];
 
 @property
 static Bindings empty() {
@@ -92,8 +94,6 @@ string typeOf(in Value v) @nogc @trusted pure nothrow {
     case Type.Thunk: assert(0, "TODO must force value");
     }
 }
-
-alias Path = string;
 
 alias PathSet = bool[Path];
 
@@ -257,53 +257,53 @@ struct Value {
     }
 
     @property const(String) str() pure const {
-        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
+        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected: "~toString());
         return s;
     }
 
     @property NixInt integer() pure const {
-        enforce!TypeException(type == Type.Int, "value is "~typeOf(this)~" while an integer was expected");
+        enforce!TypeException(type == Type.Int, "value is "~typeOf(this)~" while an integer was expected: "~toString());
         return i;
     }
 
     @property NixFloat fpoint() pure const {
-        enforce!TypeException(type == Type.Float, "value is "~typeOf(this)~" while a float was expected");
+        enforce!TypeException(type == Type.Float, "value is "~typeOf(this)~" while a float was expected: "~toString());
         return f;
     }
 
     @property Path path() pure const {
-        enforce!TypeException(type == Type.Path, "value is "~typeOf(this)~" while a path was expected");
+        enforce!TypeException(type == Type.Path, "value is "~typeOf(this)~" while a path was expected: "~toString());
         return p;
     }
 
     @property Bindings attrs() pure {
-        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
+        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected: "~toString());
         return a;
     }
 
     @property const(Bindings) attrs() pure const {
-        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected");
+        enforce!TypeException(type == Type.Attrs, "value is "~typeOf(this)~" while a set was expected: "~toString());
         return a;
     }
 
     @property bool boolean() pure const {
-        enforce!TypeException(type == Type.Bool, "value is "~typeOf(this)~" while a boolean was expected");
+        enforce!TypeException(type == Type.Bool, "value is "~typeOf(this)~" while a boolean was expected: "~toString());
         return b;
     }
 
     @property Value*[] list() pure {
-        enforce!TypeException(type == Type.List, "value is "~typeOf(this)~" while a list was expected");
+        enforce!TypeException(type == Type.List, "value is "~typeOf(this)~" while a list was expected: "~toString());
         return l;
     }
 
     @property Value*[] app() pure {
-        enforce!TypeException(type == Type.App, "value is "~typeOf(this)~" while a function application was expected");
+        enforce!TypeException(type == Type.App, "value is "~typeOf(this)~" while a function application was expected: "~toString());
         assert(l.length == 2);
         return l;
     }
 
     @property const(Expr) thunk() pure {
-        enforce!TypeException(type == Type.Thunk, "value is "~typeOf(this)~" while a thunk was expected");
+        enforce!TypeException(type == Type.Thunk, "value is "~typeOf(this)~" while a thunk was expected: "~toString());
         return t;
     }
 
@@ -313,24 +313,24 @@ struct Value {
     }
 
     @property const(ExprLambda) lambda() pure {
-        enforce!TypeException(type == Type.Lambda, "value is "~typeOf(this)~" while a lambda was expected");
+        enforce!TypeException(type == Type.Lambda, "value is "~typeOf(this)~" while a lambda was expected: "~toString());
         return el;
     }
 
     @property PrimOp primOp() pure const {
         if (type == Type.PrimOpApp) return l[0].primOp;
-        enforce!TypeException(type == Type.PrimOp, "value is "~typeOf(this)~" while a function was expected");
+        enforce!TypeException(type == Type.PrimOp, "value is "~typeOf(this)~" while a function was expected: "~toString());
         return op;
     }
 
     @property Value*[] primOpArgs() pure {
-        enforce!TypeException(type == Type.PrimOpApp, "value is "~typeOf(this)~" while a function application was expected");
+        enforce!TypeException(type == Type.PrimOpApp, "value is "~typeOf(this)~" while a function application was expected: "~toString());
         return l[1..$];
     }
 
     @property const(PathSet) context() pure const {
         if (type == Type.Path) return [p:true];
-        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected");
+        enforce!TypeException(type == Type.String, "value is "~typeOf(this)~" while a string was expected: "~toString());
         return s.context;
     }
 
@@ -370,12 +370,12 @@ struct Value {
             break;
         case Type.Path:
             static if (OP == "+") {
-            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
+            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string: "~rhs.toString());
             return Value(canonPath(this.s ~ rhs._string));
             }
         case Type.String:
             static if (OP == "+") {
-            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string");
+            enforce!TypeException(rhs.type == Type.String || rhs.type == Type.Path, "cannot coerce "~typeOf(rhs)~" to string: "~rhs.toString());
             PathSet ps;
             foreach (k, v; this.context()) ps[k] = v;
             foreach (k, v; rhs.context()) ps[k] = v;
@@ -423,9 +423,9 @@ struct Value {
         final switch (type) {
         case Type.Null:
             return type == v.type;
-        case Type.Path:
+        case Type.Path: // TODO: compare contexts
         case Type.String:
-            return type == v.type && s == v._string; // TODO: compare contexts
+            return type == v.type && s == v._string;
         case Type.Int:
             return i == v._number;
         case Type.Float:
@@ -454,7 +454,7 @@ struct Value {
         }
     }
 
-    string toString(int depth = 1) const /*pure*/ {
+    string toString(int depth = 1) const pure @trusted {
         final switch (type) {
         case Type.Null:
             return "null";

@@ -5,6 +5,7 @@ debug import std.stdio : writeln;
 import std.range.primitives : isForwardRange, ElementType;
 import std.ascii : isWhite, isDigit;
 import std.conv : text;
+static import std.exception;
 
 private enum EOF = -1;
 
@@ -14,9 +15,14 @@ class ParseException : Exception {
     }
 }
 
-void enforce(E = ParseException, T)(in T test, lazy string msg, string file = __FILE__, size_t line = __LINE__) pure {
-    if (!test) {
-        throw new E(msg, file, line);
+alias enforce = std.exception.enforce!ParseException;
+
+unittest {
+    try {
+        enforce(false, "msg");
+        assert(false);
+    } catch (ParseException e) {
+        assert(e.msg == "msg");
     }
 }
 
