@@ -72,7 +72,7 @@ enum Type : byte {
     // Ref,//test
     // External,
     // Error,
-    // Blackhole,
+    Blackhole,
 }
 
 string typeOf(in Value v) @nogc @trusted pure nothrow {
@@ -90,6 +90,7 @@ string typeOf(in Value v) @nogc @trusted pure nothrow {
     case Type.Lambda:
     case Type.PrimOp:
     case Type.PrimOpApp: return "lambda";
+    case Type.Blackhole:
     case Type.Thunk: assert(0, "TODO must force value");
     }
 }
@@ -449,6 +450,8 @@ struct Value {
             return false;
         case Type.Thunk:
             assert(0, "Should forceValue before calling opEquals");
+        case Type.Blackhole:
+            assert(0);
         }
     }
 
@@ -490,6 +493,7 @@ struct Value {
             return "<LAMBDA>";
         case Type.App:
         case Type.Thunk:
+        case Type.Blackhole:
             return "<CODE>";
         case Type.PrimOp:
             return "<PRIMOP>";
@@ -534,6 +538,8 @@ struct Value {
         case Type.Thunk:
             assert(0, "Should forceValue before calling toHash");
             // return t.toHash ^ env.vars.toHash;
+        case Type.Blackhole:
+            assert(0);
         }
     }
 }

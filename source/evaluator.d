@@ -78,7 +78,8 @@ ref Value forceValueDeep(return ref Value value) {
     switch (value.type) {
     case Type.Attrs:
         // TODO: detect infinite recursion
-        foreach (v; value.attrs) {
+        foreach (k, v; value.attrs) {
+            scope(failure) writeln("while evaluating the attribute ", k);
             forceValueDeep(*v);
         }
         break;
@@ -105,7 +106,7 @@ ref Value forceValue(return ref Value value) {
     case Type.Thunk:
         auto expr = value.thunk;
         auto env = value.env;
-        value = Value(double.nan); // avoid infinite recursion
+        value.type = Type.Blackhole; // avoid infinite recursion
         value = eval(expr, *env);
         break;
     case Type.PrimOp:
@@ -116,10 +117,11 @@ ref Value forceValue(return ref Value value) {
         value = callFunction(*value.app[0], *value.app[1]);
         assert(value.type != Type.Thunk);
         break;
-    // case Type.Blackhole:
-        // assert(0, "infinite recursion encountered");
+    case Type.Blackhole:
+        throw new EvalException("infinite recursion encountered");
     default:
         break;
+
     }
     return value;
 }

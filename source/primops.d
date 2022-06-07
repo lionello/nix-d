@@ -216,6 +216,8 @@ private Value toJSON(ref Value v) {
         case Type.Lambda:
         case Type.Thunk:
             throw new TypeException("cannot convert to JSON: "~v.typeOf);
+        case Type.Blackhole:
+            assert(0);
         }
     }
     return Value(convJSON(v), null);
