@@ -24,7 +24,7 @@ private Value functionArgs(ref Value func) {
     const formals = forceValue(func).lambda.formals;
     if (formals) {
         foreach(f; formals.elems) {
-            args[f.name] = new Value(f.def !is null);
+            args[f.name] = Attr(new Value(f.def !is null));
         }
     }
     return Value(args);
@@ -95,12 +95,12 @@ private Value binOp(string OP)(ref Value lhs, ref Value rhs) /*pure*/ {
 private Value tryEval(ref Value expr) {
     Bindings result;
     try {
-        result["value"] = &forceValue(expr);
-        result["success"] = new Value(true);
+        result["value"] = Attr(&forceValue(expr));
+        result["success"] = Attr(new Value(true));
     }
     catch(AssertionException e) {
-        result["value"] = new Value(false);
-        result["success"] = new Value(false);
+        result["value"] = Attr(new Value(false));
+        result["success"] = Attr(new Value(false));
     }
     return Value(result);
 }
@@ -293,7 +293,7 @@ private Value fromJSON(ref Value str) {
         case JSONType.object:
             Bindings output;
             foreach (k, e; v.object) {
-                output[k] = convJSON(e);
+                output[k] = Attr(convJSON(e));
             }
             return new Value(output);
         case JSONType.true_:    return new Value(true);
@@ -385,16 +385,16 @@ private Value getContext(ref Value str) {
     Bindings attrs;
     foreach (path, info; contextInfos) {
         Bindings infoAttrs;
-        if (info.path) infoAttrs["path"] = new Value(true);
-        if (info.allOutputs) infoAttrs["allOutputs"] = new Value(true);
+        if (info.path) infoAttrs["path"] = Attr(new Value(true));
+        if (info.allOutputs) infoAttrs["allOutputs"] = Attr(new Value(true));
         if (info.outputs) {
             Value*[] outputs;
             foreach (output; info.outputs) {
-                outputs ~= new Value(output, null);
+                outputs ~= Attr(new Value(output, null));
             }
-            infoAttrs["outputs"] = new Value(outputs);
+            infoAttrs["outputs"] = Attr(new Value(outputs));
         }
-        attrs[path] = new Value(infoAttrs);
+        attrs[path] = Attr(new Value(infoAttrs));
     }
     return Value(attrs);
 }
@@ -416,9 +416,9 @@ private auto lexicographicOrder(Bindings attrs) {
 
 unittest {
     import std.range : array;
-    Bindings v = ["b": null];
-    v["bb"] = null;
-    v["a"] = null;
+    Bindings v = ["b": Attr()];
+    v["bb"] = Attr();
+    v["a"] = Attr();
     assert(v.lexicographicOrder.array == ["a", "b", "bb"]);
 }
 
@@ -599,10 +599,10 @@ private Value derivationStrict(ref Value attrs) {
     const drvPathS = printStorePath(drvPath);
 
     Bindings v;
-    v["drvPath"] = new Value(drvPathS, ["="~drvPathS:true]);
+    v["drvPath"] = Attr(new Value(drvPathS, ["="~drvPathS:true]));
     foreach (i; outputs) {
         auto outputPath = hash~"-"~name;
-        v[i] = new Value(printStorePath(outputPath), ["!"~i~"!"~drvPathS:true]);
+        v[i] = Attr(new Value(printStorePath(outputPath), ["!"~i~"!"~drvPathS:true]));
     }
     return Value(v);
 }
@@ -653,10 +653,10 @@ ref Env createBaseEnv() {
             static if (arity!F == 2) return F(*args[0], *args[1]);
             static if (arity!F == 3) return F(*args[0], *args[1], *args[2]);
         }
-        return new Value(&primop);
+        return Attr(new Value(&primop));
     }
 
-    auto derivation = new Value;
+    auto derivation = Attr(new Value);
     Bindings globals = [
         "abort" : wrap!abort,
         "__add" : wrap!(binOp!"+"),
@@ -676,8 +676,8 @@ ref Env createBaseEnv() {
         "__concatLists" : wrap!concatLists,
         "__concatMap" : wrap!concatMap,
         "__concatStringsSep" : wrap!concatStringsSep,
-        "__currentSystem" : new Value("x86_64-darwin", null), // impure
-        "__currentTime" : new Value(time(null)), // impure FIXME: make lazy
+        "__currentSystem" : Attr(new Value("x86_64-darwin", null)), // impure
+        "__currentTime" : Attr(new Value(time(null))), // impure FIXME: make lazy
         "__deepSeq" : wrap!deepSeq,
         "derivation": derivation,
         "derivationStrict" : wrap!derivationStrict,
@@ -685,7 +685,7 @@ ref Env createBaseEnv() {
         "__div" : wrap!(binOp!"/"),
         "__elem" : wrap!elem,
         "__elemAt" : wrap!elemAt,
-        "false" : new Value(false),
+        "false" : Attr(new Value(false)),
         // "fetchGit" : ni!"fetchGit",
         // "fetchMercurial" : ni!"fetchMercurial",
         // "fetchTarball" : ni!"fetchTarball",
@@ -719,7 +719,7 @@ ref Env createBaseEnv() {
         "isNull" : wrap!isNull,
         "__isPath" : wrap!isPath,
         "__isString" : wrap!isString,
-        "__langVersion" : new Value(5), //baseEnv
+        "__langVersion" : Attr(new Value(5)), //baseEnv
         "__length" : wrap!length_,
         "__lessThan" : wrap!lessThan,
         "__listToAttrs" : wrap!listToAttrs,
@@ -727,9 +727,9 @@ ref Env createBaseEnv() {
         // "__mapAttrs" : ni!"__mapAttrs",
         // "__match" : ni!"__match", //noctx
         "__mul" : wrap!(binOp!"*"),
-        "__nixPath" : new Value(cast(Value*[])[]), //[{path="";prefix="";}] impure
-        "__nixVersion" : new Value("2.3.4", null), //baseEnv
-        "null" : new Value,
+        "__nixPath" : Attr(new Value(cast(Value*[])[])), //[{path="";prefix="";}] impure
+        "__nixVersion" : Attr(new Value("2.3.4", null)), //baseEnv
+        "null" : Attr(new Value),
         // "__parseDrvName" : ni!"__parseDrvName", //noctx
         // "__partition" : ni!"__partition",
         // "__path" : ni!"__path",
@@ -744,7 +744,7 @@ ref Env createBaseEnv() {
         "__sort" : wrap!sort,
         // "__split" : ni!"__split",//noctx
         // "__splitVersion" : ni!"__splitVersion",//noctx
-        "__storeDir" : new Value(storeDir), // baseEnv
+        "__storeDir" : Attr(new Value(storeDir)), // baseEnv
         // "__storePath" : ni!"__storePath", // impure
         "__stringLength" : wrap!stringLength,
         "__sub" : wrap!(binOp!"-"),
@@ -757,7 +757,7 @@ ref Env createBaseEnv() {
         "toString" : wrap!(toString),
         // "__toXML" : ni!"__toXML",
         // "__trace" : ni!"__trace",
-        "true" : new Value(true),
+        "true" : Attr(new Value(true)),
         "__tryEval" : wrap!tryEval,
         "__typeOf" : wrap!typeOf_,
         // "__unsafeDiscardOutputDependency" : ni!"__unsafeDiscardOutputDependency",
@@ -769,7 +769,7 @@ ref Env createBaseEnv() {
     foreach (k, v; globals) {
         builtins[k[0..2]=="__"?k[2..$]:k] = v;
     }
-    globals["builtins"] = builtins["builtins"] = new Value(builtins);
+    globals["builtins"] = builtins["builtins"] = Attr(new Value(builtins));
 
     auto baseEnv = new Env(null, globals);
     /* Note: we have to initialize the 'derivation' constant *after*

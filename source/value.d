@@ -15,32 +15,31 @@ class TypeException : Exception {
 
 // alias LazyValue = Value delegate(); // TODO: use this instead of thunk
 
-alias Attr = Value*;
-
-// struct Attr {
-//     Value *value;
+struct Attr {
+    alias value this;
+    Value *value;
 //     Loc loc;
 //     string toString() const @safe pure {
 //         return "Attr("~value.toString()~", "~loc.toString()~")";
 //     }
-// }
+}
 
 alias Bindings = Attr[string];
 
 @property
 static Bindings empty() {
-    Bindings _empty = ["": null];
+    Bindings _empty = ["": Attr()];
     _empty.remove("");
     return _empty;
 }
 
 unittest {
     assert(empty.length == 0);
-    empty["x"] = Value.TRUE.dup;
+    empty["x"] = Attr(Value.TRUE.dup);
     assert(empty.length == 0);
     auto aa1 = empty();
     auto aa2 = aa1;
-    aa2["y"] = Value.FALSE.dup;
+    aa2["y"] = Attr(Value.FALSE.dup);
     assert(aa1 == aa2);
 }
 
@@ -552,8 +551,8 @@ unittest {
     assert(Value(false) == Value(false));
     assert(Value(false) != Value(true));
     assert(Value([new Value(3), new Value()]) == Value([new Value(3.0), new Value()]));
-    assert(Value(["n":new Value(4)]) == Value(["n":new Value(4.0)]));
-    assert(Value(["n":new Value()]) != Value(["k":new Value()]));
+    assert(Value(["n":Attr(new Value(4))]) == Value(["n":Attr(new Value(4.0))]));
+    assert(Value(["n":Attr(new Value())]) != Value(["k":Attr(new Value())]));
 }
 
 unittest {
@@ -564,7 +563,7 @@ unittest {
     assert(Value(true).toString() == "true");
     assert(Value(false).toString() == "false");
     assert(Value([new Value()]).toString() == "[ null ]");
-    assert(Value(["n":new Value()]).toString() == "{ n = null; }");
+    assert(Value(["n":Attr(new Value())]).toString() == "{ n = null; }");
 }
 
 unittest {
@@ -588,7 +587,7 @@ unittest {
 }
 
 unittest {
-    auto functor = new Value(["__functor": new Value()]);
+    auto functor = new Value(["__functor": Attr(new Value())]);
     const map = [
         Value(): true,
         Value("/"): true,
@@ -597,8 +596,8 @@ unittest {
         Value(3.0): true,
         Value(true): true,
         Value([new Value()]): true,
-        Value(["null": new Value()]): true,
-        Value(functor, new Value(2)): true,
+        Value(["null": Attr(new Value())]): true,
+        Value(functor, Attr(new Value(2))): true,
     ];
     assert(Value() in map);
     assert(Value("/") in map);
@@ -612,14 +611,14 @@ unittest {
     assert(Value(4) !in map);
     assert(Value(true) in map);
     assert(Value(false) !in map);
-    assert(Value([new Value()]) in map);
-    assert(Value([new Value(1)]) !in map);
-    assert(Value(["null": new Value()]) in map);
-    assert(Value(["null": new Value("/")]) !in map);
-    assert(Value(["asdf": new Value()]) !in map);
-    assert(Value(functor, new Value(2)) in map);
-    assert(Value([functor, new Value(2)]) !in map);
-    assert(Value(functor, new Value(2.0)) in map);
-    assert(Value(functor, new Value(42)) !in map);
-    assert(Value(new Value(["attr": new Value()]), new Value(2)) !in map);
+    assert(Value([Attr(new Value())]) in map);
+    assert(Value([Attr(new Value(1))]) !in map);
+    assert(Value(["null": Attr(new Value())]) in map);
+    assert(Value(["null": Attr(new Value("/"))]) !in map);
+    assert(Value(["asdf": Attr(new Value())]) !in map);
+    assert(Value(functor, Attr(new Value(2))) in map);
+    assert(Value([functor, Attr(new Value(2))]) !in map);
+    assert(Value(functor, Attr(new Value(2.0))) in map);
+    assert(Value(functor, Attr(new Value(42))) !in map);
+    assert(Value(new Value(["attr": Attr(new Value())]), new Value(2)) !in map);
 }

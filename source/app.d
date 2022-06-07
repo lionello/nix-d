@@ -33,7 +33,7 @@ void main(string[] args) {
             if (value.type == Type.Lambda) {
                 // FIXME: read args from .flags file
                 auto lib = eval(parseAndBind("import(./lib.nix)"));
-                auto attrs = Value(["lib": &lib, "xyzzy": Value("xyzzy!", null).dup]);
+                auto attrs = Value(["lib": Attr(&lib), "xyzzy": Attr(new Value("xyzzy!", null))]);
                 value = callFunction(value, attrs);
                 value.forceValueDeep();
                 value = *value.attrs["result"];

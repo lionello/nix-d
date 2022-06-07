@@ -43,7 +43,7 @@ Value callFunction(ref Value fun, ref Value arg) /*pure*/ {
         auto env2 = new Env(f.env);
         if (f.lambda.arg) {
             // add f.lambda.arg to the new env
-            env2.vars[f.lambda.arg] = arg.dup;
+            env2.vars[f.lambda.arg] = Attr(arg.dup);
         }
         if (f.lambda.formals) {
             auto attrs = forceValue(arg).attrs;
@@ -57,7 +57,7 @@ Value callFunction(ref Value fun, ref Value arg) /*pure*/ {
                     env2.vars[formal.name] = *j;
                 } else {
                     enforce!TypeException(formal.def, "Lambda called without required argument "~formal.name);
-                    env2.vars[formal.name] = new Value(formal.def, env2);
+                    env2.vars[formal.name] = Attr(new Value(formal.def, env2));
                 }
             }
             if (!f.lambda.formals.ellipsis && attrsUsed != attrs.length) {
@@ -564,10 +564,10 @@ class Evaluator : ConstVisitors {
             foreach (k, v; expr.attrs) {
                 debug(EVAL) writeln("rec ", k, " in env ", (v.inherited ? env : newEnv).vars);
                 if (hasOverrides && !v.inherited) {
-                    attrs[k] = new Value(v.value, newEnv);
+                    attrs[k] = Attr(new Value(v.value, newEnv));
                     assert(k in newEnv.vars);
                 } else {
-                    attrs[k] = maybeThunk(v.value, v.inherited ? env : newEnv).dup;
+                    attrs[k] = Attr(maybeThunk(v.value, v.inherited ? env : newEnv).dup);
                 }
             }
 
@@ -583,7 +583,7 @@ class Evaluator : ConstVisitors {
                 auto vOverrides = forceValue(*attrs["__overrides"]).attrs;
                 foreach(k, ref v; vOverrides) {
                     // auto j = k in expr.attrs;
-                    attrs[k] = v; // overwrites
+                    attrs[k] = Attr(v); // overwrites
                 }
             }
             dynamicEnv = newEnv;
@@ -592,7 +592,7 @@ class Evaluator : ConstVisitors {
         } else {
             foreach (k, v; expr.attrs) {
                 // attrs[k] = new Value(v.value, env);
-                attrs[k] = maybeThunk(v.value, env).dup;
+                attrs[k] = Attr(maybeThunk(v.value, env).dup);
             }
         }
         // Dynamic attrs apply *after* rec and __overrides.
@@ -608,7 +608,7 @@ class Evaluator : ConstVisitors {
             }
             const nameSym = forceStringNoCtx(nameVal);
             enforce!EvalException(nameSym !in attrs, "dynamic attribute already defined: "~nameSym);
-            attrs[nameSym] = maybeThunk(attr.value, dynamicEnv).dup;
+            attrs[nameSym] = Attr(maybeThunk(attr.value, dynamicEnv).dup);
         }
         debug(EVAL) foreach (k, v; attrs) {
             writeln("  ", k, " = ", *v, " in env ", v.type == Type.Thunk ? v.env.vars : cast(Bindings) null);
@@ -635,7 +635,7 @@ class Evaluator : ConstVisitors {
         // while the inherited attributes are evaluated in the original
         // environment.
         foreach (k, attr; expr.attrs.attrs) {
-            newEnv.vars[k] = maybeThunk(attr.value, attr.inherited ? env : newEnv).dup;
+            newEnv.vars[k] = Attr(maybeThunk(attr.value, attr.inherited ? env : newEnv).dup);
         }
         env = newEnv;
         visit(expr.body);
@@ -693,21 +693,21 @@ unittest {
     auto att = new ExprAttrs(LOC, );
     // { a = "ok"; }
     att.attrs["a"] = ExprAttrs.AttrDef(new ExprString(LOC, "ok"));
-    assert(eval(att) == Value(["a": &ok]));
+    assert(eval(att) == Value(["a": Attr(&ok)]));
     // { a = "ok"; true = true; }
     att.attrs["true"] = ExprAttrs.AttrDef(true_, true);
-    assert(eval(att) == Value(["a": &ok, "true": new Value(true)]));
+    assert(eval(att) == Value(["a": Attr(&ok), "true": Attr(new Value(true))]));
     // { a = "ok"; true = true; b = "p"; }
     att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(LOC, "p"), new ExprString(LOC, "b"));
-    assert(eval(att) == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null)]));
+    assert(eval(att) == Value(["a": Attr(&ok), "true": Attr(new Value(true)), "b": Attr(new Value("p", null))]));
     // rec { a = "ok"; true = true; b = "p"; }
     att.recursive = true;
     // rec { a = "ok"; true = true; b = "p"; c = a; }
     att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar(LOC, "a"));
-    assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok])); //needs `rec`
+    assert(eval(att).forceValueDeep == Value(["a": Attr(&ok), "true": Attr(new Value(true)), "b": Attr(new Value("p", null)), "c": Attr(&ok)])); //needs `rec`
     // rec { a = "ok"; true = true; b = "p"; c = a; d = b; }
     att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprVar(LOC, "b"), new ExprString(LOC, "d"));
-    assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok, "d": new Value("p", null)])); //needs `rec`
+    assert(eval(att).forceValueDeep == Value(["a": Attr(&ok), "true": Attr(new Value(true)), "b": Attr(new Value("p", null)), "c": Attr(&ok), "d": Attr(new Value("p", null))])); //needs `rec`
     assert(eval(new ExprFloat(LOC, 1.1)) == Value(1.1));
     assert(eval(new ExprInt(LOC, 42)) == Value(42));
     assert(eval(new ExprString(LOC, "foo")) == Value("foo", null));
