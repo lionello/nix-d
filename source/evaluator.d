@@ -8,12 +8,6 @@ import nix.path;
 debug import std.stdio : writeln;
 import std.exception : enforce;
 
-class EvalException : Exception {
-    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
-        super(msg, file, line);
-    }
-}
-
 class AssertionException : EvalException {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
         super("assertion "~msg~" failed", file, line);

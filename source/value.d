@@ -13,6 +13,12 @@ class TypeException : Exception {
     }
 }
 
+class EvalException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) pure {
+        super(msg, file, line);
+    }
+}
+
 // alias LazyValue = Value delegate(); // TODO: use this instead of thunk
 
 struct Attr {
@@ -413,9 +419,19 @@ struct Value {
         case Type.Path:
         case Type.String:
             return cmp(this.s, rhs._string);
+        case Type.List:
+            if (rhs.type == Type.List) {
+                // Lexicographic comparison
+                for (auto i = 0;; i++) {
+                    if (i == rhs.l.length) return 1;
+                    if (i == this.l.length) return -1;
+                    if (auto c = this.l[i].opCmp(*rhs.l[i])) return c;
+                }
+            }
+            break;
         default:
         }
-        assert(0, "cannot compare type "~typeOf(this)~" with "~typeOf(rhs));
+        throw new EvalException("cannot compare "~typeOf(this)~" with "~typeOf(rhs));
     }
 
     bool opEquals()(auto ref const Value v) @trusted @nogc pure const {

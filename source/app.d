@@ -50,7 +50,7 @@ void main(string[] args) {
                 // writeln("Failed: ", e.message);
             }
         }
-        catch (Exception e) {
+        catch (Throwable e) {
             writeln(RED, "Failed: ", e, RESET);
             // break;
         }
