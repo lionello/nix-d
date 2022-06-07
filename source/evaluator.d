@@ -20,19 +20,16 @@ class AssertionException : EvalException {
     }
 }
 
-// Helper for unittest
-private @property Loc L(int line = __LINE__) { return Loc(line); }
-
 ref Value maybeThunk(in Expr e, Env* env) /*pure*/ {
-    // debug writeln(__LINE__, env.vars);
+    // debug(EVAL) writeln(__LINE__, env.vars);
     auto thunker = new Thunker(env);
     e.accept(thunker);
     return *thunker.value;
 }
 
-Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
-    // debug writeln("callFunction ", fun, arg);
-    auto f = forceValue(fun, pos);
+Value callFunction(ref Value fun, ref Value arg) /*pure*/ {
+    // debug(EVAL) writeln("callFunction ", fun, arg);
+    auto f = forceValue(fun);
     switch(f.type) {
     case Type.PrimOp:
         assert(0);
@@ -40,8 +37,8 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
         return f.primOp()(f.primOpArgs ~ &arg);
     case Type.Attrs:
         auto functor = f.attrs["__functor"];
-        auto v2 = callFunction(*functor, f, pos);
-        return callFunction(v2, arg, pos);
+        auto v2 = callFunction(*functor, f);
+        return callFunction(v2, arg);
     case Type.Lambda:
         auto env2 = new Env(f.env);
         if (f.lambda.arg) {
@@ -49,7 +46,7 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
             env2.vars[f.lambda.arg] = arg.dup;
         }
         if (f.lambda.formals) {
-            auto attrs = forceValue(arg, pos).attrs;
+            auto attrs = forceValue(arg).attrs;
             // For each formal argument, get the actual argument.  If
             // there is no matching actual argument but the formal
             // argument has a default, use the default.
@@ -76,7 +73,7 @@ Value callFunction(ref Value fun, ref Value arg, in Loc pos) /*pure*/ {
 }
 
 ref Value forceValueDeep(return ref Value value) {
-    // debug writeln("forceValueDeep ", value);
+    // debug(EVAL) writeln("forceValueDeep ", value);
     forceValue(value);
     switch (value.type) {
     case Type.Attrs:
@@ -99,8 +96,8 @@ ref Value forceValueDeep(return ref Value value) {
     return value;
 }
 
-ref Value forceValue(return ref Value value, in Loc pos = Loc()) {
-    debug writeln("forceValue ", value);
+ref Value forceValue(return ref Value value) {
+    debug(EVAL) writeln("forceValue ", value);
     switch (value.type) {
     // case Type.Ref:
     //     value = forceValue(value.deref);
@@ -116,7 +113,7 @@ ref Value forceValue(return ref Value value, in Loc pos = Loc()) {
         assert(value.type != Type.Thunk);
         break;
     case Type.App:
-        value = callFunction(*value.app[0], *value.app[1], pos);
+        value = callFunction(*value.app[0], *value.app[1]);
         assert(value.type != Type.Thunk);
         break;
     // case Type.Blackhole:
@@ -128,12 +125,12 @@ ref Value forceValue(return ref Value value, in Loc pos = Loc()) {
 }
 
 unittest {
-    assert(eval(new ExprVar(L, "__currentTime")).integer);
-    assert(eval(new ExprVar(L, "__typeOf")).primOpArgs);
-    assert("int" == eval(new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__typeOf"), new ExprInt(L, 2))).str);
-    assert(eval(new ExprVar(L, "__add")).primOpArgs);
-    assert(eval(new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2))).primOpArgs);
-    assert(5 == eval(new ExprBinaryOp(L, Tok.APP, new ExprBinaryOp(L, Tok.APP, new ExprVar(L, "__add"), new ExprInt(L, 2)), new ExprInt(L, 3))).integer);
+    assert(eval(new ExprVar(LOC, "__currentTime")).integer);
+    assert(eval(new ExprVar(LOC, "__typeOf")).primOpArgs);
+    assert("int" == eval(new ExprBinaryOp(LOC, Tok.APP, new ExprVar(LOC, "__typeOf"), new ExprInt(LOC, 2))).str);
+    assert(eval(new ExprVar(LOC, "__add")).primOpArgs);
+    assert(eval(new ExprBinaryOp(LOC, Tok.APP, new ExprVar(LOC, "__add"), new ExprInt(LOC, 2))).primOpArgs);
+    assert(5 == eval(new ExprBinaryOp(LOC, Tok.APP, new ExprBinaryOp(LOC, Tok.APP, new ExprVar(LOC, "__add"), new ExprInt(LOC, 2)), new ExprInt(LOC, 3))).integer);
 }
 
 string forceStringNoCtx(ref Value str) {
@@ -145,17 +142,17 @@ string forceStringNoCtx(ref Value str) {
 String tryAttrsToString(ref Value value, bool coerceMore, bool copyToStore) {
     auto toString = "__toString" in value.attrs;
     if (!toString) return String.init;
-    auto str = callFunction(**toString, value, Loc());
+    auto str = callFunction(**toString, value);
     return coerceToString(str, coerceMore, copyToStore);
 }
 
-String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore = true) {
+String coerceToString(ref Value value, bool coerceMore = false, bool copyToStore = true, bool canonicalize = true) {
     forceValue(value);
     switch (value.type) {
     case Type.String:
         return value.str;
     case Type.Path:
-        auto path = canonPath(value.path);
+        auto path = canonicalize ? canonPath(value.path) : value.path;
         return copyToStore ? copyPathToStore(path) : String(path);
     case Type.Attrs:
         auto s = tryAttrsToString(value, coerceMore, copyToStore);
@@ -268,9 +265,9 @@ private class Thunker : ConstVisitorT!(Expr, ExprInt, ExprFloat, ExprString, Exp
 
 unittest {
     auto thunker = new Thunker(new Env);
-    new ExprInt(L, 42).accept(thunker);
+    new ExprInt(LOC, 42).accept(thunker);
     assert(thunker.value.integer == 42);
-    new ExprList(L, [new ExprInt(L, 42)]).accept(thunker);
+    new ExprList(LOC, [new ExprInt(LOC, 42)]).accept(thunker);
     assert(thunker.value.thunk);
 }
 
@@ -299,7 +296,7 @@ bool eqValues(ref Value lhs, ref Value rhs) {
         if (l.attrs.length != r.attrs.length) return false;
         foreach (k, p; l.attrs) {
             auto pp = k in r.attrs;
-            debug writeln("comparing ", k, ": ", p, " vs ", pp);
+            debug(EVAL) writeln("comparing ", k, ": ", p, " vs ", pp);
             if (pp is null || !eqValues(*p, **pp)) return false;
         }
         return true;
@@ -325,12 +322,12 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprOpNot expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         value = new Value(!visit(expr.expr).boolean);
     }
 
     void visit(in ExprBinaryOp expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         switch (expr.op) {
         case Tok.AND:
             if (visit(expr.left).boolean)
@@ -360,16 +357,16 @@ class Evaluator : ConstVisitors {
         case Tok.MUL:
             auto __mul = lookupVar("__mul"); // can be overridden
             auto lhs = visit(expr.left);
-            auto partial = callFunction(__mul, lhs, expr.loc);
+            auto partial = callFunction(__mul, lhs);
             auto rhs = visit(expr.right);
-            value = callFunction(partial, rhs, expr.loc).dup;
+            value = callFunction(partial, rhs).dup;
             break;
         case Tok.DIV:
             auto __div = lookupVar("__div"); // can be overridden
             auto lhs = visit(expr.left);
-            auto partial = callFunction(__div, lhs, expr.loc);
+            auto partial = callFunction(__div, lhs);
             auto rhs = visit(expr.right);
-            value = callFunction(partial, rhs, expr.loc).dup;
+            value = callFunction(partial, rhs).dup;
             break;
         case Tok.ADD:
             auto lhs = visit(expr.left);
@@ -379,6 +376,7 @@ class Evaluator : ConstVisitors {
                 // auto __add = lookupVar("__add"); // can be overridden
                 value = (lhs + forceValue(rhs)).dup;
             } else {
+                // TODO: skip canonization of first path
                 auto str = coerceToString(rhs, false, lhs.type == Type.String);
                 value = (lhs + Value(str, str.context)).dup;
             }
@@ -387,9 +385,9 @@ class Evaluator : ConstVisitors {
         case Tok.SUB:
             auto __sub = lookupVar("__sub"); // can be overridden
             auto lhs = visit(expr.left);
-            auto partial = callFunction(__sub, lhs, expr.loc);
+            auto partial = callFunction(__sub, lhs);
             auto rhs = visit(expr.right);
-            value = callFunction(partial, rhs, expr.loc).dup;
+            value = callFunction(partial, rhs).dup;
             break;
         case Tok.UPDATE:
             Bindings b;
@@ -404,31 +402,31 @@ class Evaluator : ConstVisitors {
         case Tok.LT:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
             auto lhs = visit(expr.left);
-            auto partial = callFunction(__lessThan, lhs, expr.loc);
+            auto partial = callFunction(__lessThan, lhs);
             auto rhs = visit(expr.right);
-            value = callFunction(partial, rhs, expr.loc).dup;
+            value = callFunction(partial, rhs).dup;
             break;
         case Tok.LEQ:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
             auto rhs = visit(expr.right);
-            auto partial = callFunction(__lessThan, rhs, expr.loc);
+            auto partial = callFunction(__lessThan, rhs);
             auto lhs = visit(expr.left);
-            const gt = callFunction(partial, lhs, expr.loc);
+            const gt = callFunction(partial, lhs);
             value = new Value(!gt.boolean);
             break;
         case Tok.GT:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
             auto rhs = visit(expr.right);
-            auto partial = callFunction(__lessThan, rhs, expr.loc);
+            auto partial = callFunction(__lessThan, rhs);
             auto lhs = visit(expr.left);
-            value = callFunction(partial, lhs, expr.loc).dup;
+            value = callFunction(partial, lhs).dup;
             break;
         case Tok.GEQ:
             auto __lessThan = lookupVar("__lessThan"); // can be overridden
             auto lhs = visit(expr.left);
-            auto partial = callFunction(__lessThan, lhs, expr.loc);
+            auto partial = callFunction(__lessThan, lhs);
             auto rhs = visit(expr.right);
-            const lt = callFunction(partial, rhs, expr.loc);
+            const lt = callFunction(partial, rhs);
             value = new Value(!lt.boolean);
             break;
         case Tok.IMPL:
@@ -441,7 +439,7 @@ class Evaluator : ConstVisitors {
         case Tok.APP:
             auto lhs = visit(expr.left);
             // TODO: detect tail recursion
-            value = callFunction(lhs, maybeThunk(expr.right, env), expr.loc).dup;
+            value = callFunction(lhs, maybeThunk(expr.right, env)).dup;
             break;
         default:
             assert(0);
@@ -451,7 +449,7 @@ class Evaluator : ConstVisitors {
     ref Value lookupVar(string name) {
         /* Check whether the variable appears in the environment. */
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            debug writeln("lookupVar ", name, " in env ", curEnv.vars);
+            debug(EVAL) writeln("lookupVar ", name, " in env ", curEnv.vars);
             if (auto v = name in curEnv.vars) {
                 // fromWith = false;
                 return **v;
@@ -461,7 +459,7 @@ class Evaluator : ConstVisitors {
         enclosing `with'.  If there is no `with', then we can issue an
         "undefined variable" error now. */
         for (auto curEnv = this.env; curEnv; curEnv = curEnv.up) {
-            debug writeln("lookupVar(with) ", name, curEnv.withVars);
+            debug(EVAL) writeln("lookupVar(with) ", name, curEnv.withVars);
             if (curEnv.hasWith && !curEnv.withVars) {
                 curEnv.withVars = eval(curEnv.hasWith, *curEnv.up).attrs;
             }
@@ -474,28 +472,24 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprInt expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.n);
     }
 
     void visit(in ExprFloat expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.f);
     }
 
     void visit(in ExprString expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(expr.s, null);
     }
 
     void visit(in ExprPath expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
         value = new Value(absPath(expr.p));
     }
 
     void visit(in ExprVar expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
-        value = &forceValue(lookupVar(expr.name), expr.loc);
+        scope(failure) writeln("while evaluating the variable ", expr);
+        value = &forceValue(lookupVar(expr.name));
     }
 
     private string getName(in ref AttrName an) {
@@ -507,40 +501,40 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprSelect expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the select expression ", expr);
         visit(expr.left);
-        debug writeln("after expr.left=",*value, " for ", expr.ap);
+        debug(EVAL) writeln("after expr.left=",*value, " for ", expr.ap);
         foreach (a; expr.ap) {
             scope(failure) writeln("while evaluating the attribute ", a, " on ", expr.loc);
             const name = getName(a);
-            forceValue(*value, expr.loc); // TODO: use pos from attr 'a'
-            debug writeln("look for ", name, " in ", *value);
+            forceValue(*value); // TODO: use pos from attr 'a'
+            debug(EVAL) writeln("look for ", name, " in ", *value);
             if (value.type == Type.Attrs) {
                 if (auto j = name in value.attrs) {
-                    debug writeln(" found ", name, ": ", **j, (*j).type == Type.Thunk ? (*j).env.vars : null);
+                    debug(EVAL) writeln(" found ", name, ": ", **j, (*j).type == Type.Thunk ? (*j).env.vars : null);
                     value = *j;
                     continue;
                 }
             }
             if (expr.def) {
-                debug writeln("defaulting to ", expr.def);
+                debug(EVAL) writeln("defaulting to ", expr.def);
                 visit(expr.def);
                 break;
             }
             import nix.printer : format;
-            debug writeln(format(expr), expr.ap, "=", *value);
+            debug(EVAL) writeln(format(expr), expr.ap, "=", *value);
             throw new EvalException("attribute '"~name~"' missing");
         }
         scope(failure) writeln("while evaluating the attribute path ", expr.ap.toString(), " on ", expr.loc);
-        forceValue(*value, expr.loc);
+        forceValue(*value);
     }
 
     void visit(in ExprOpHasAttr expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         visit(expr.left);
         foreach (a; expr.ap) {
             scope(failure) writeln("while evaluating the attribute ", a);
-            forceValue(*value, expr.loc);
+            forceValue(*value);
             if (value.type == Type.Attrs) {
                 if (auto j = getName(a) in value.attrs) {
                     value = *j;
@@ -554,11 +548,11 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprAttrs expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         auto dynamicEnv = env;
         Bindings attrs = empty;
         if (expr.recursive) {
-            debug writeln("ExprAttrs (expr.recursive)");
+            debug(EVAL) writeln("ExprAttrs (expr.recursive)");
             const hasOverrides = "__overrides" in expr.attrs;
 
             // Create a new environment that contains the attributes in this `rec'.
@@ -568,7 +562,7 @@ class Evaluator : ConstVisitors {
             // environment, while the inherited attributes are evaluated
             // in the original environment.
             foreach (k, v; expr.attrs) {
-                debug writeln("rec ", k, " in env ", (v.inherited ? env : newEnv).vars);
+                debug(EVAL) writeln("rec ", k, " in env ", (v.inherited ? env : newEnv).vars);
                 if (hasOverrides && !v.inherited) {
                     attrs[k] = new Value(v.value, newEnv);
                     assert(k in newEnv.vars);
@@ -586,7 +580,7 @@ class Evaluator : ConstVisitors {
             // been substituted into the bodies of the other attributes.
             // Hence we need __overrides.)
             if (hasOverrides) {
-                auto vOverrides = forceValue(*attrs["__overrides"], expr.loc).attrs;
+                auto vOverrides = forceValue(*attrs["__overrides"]).attrs;
                 foreach(k, ref v; vOverrides) {
                     // auto j = k in expr.attrs;
                     attrs[k] = v; // overwrites
@@ -594,7 +588,7 @@ class Evaluator : ConstVisitors {
             }
             dynamicEnv = newEnv;
             assert(dynamicEnv.vars is attrs);
-            debug writeln("dynamicEnv is ", dynamicEnv.vars);
+            debug(EVAL) writeln("dynamicEnv is ", dynamicEnv.vars);
         } else {
             foreach (k, v; expr.attrs) {
                 // attrs[k] = new Value(v.value, env);
@@ -603,12 +597,12 @@ class Evaluator : ConstVisitors {
         }
         // Dynamic attrs apply *after* rec and __overrides.
         foreach (attr; expr.dynamicAttrs) {
-            debug writeln("dynamicAttr ", attr.name);
+            debug(EVAL) writeln("dynamicAttr ", attr.name);
             env = dynamicEnv;
             auto nameVal = visit(attr.name);
-            debug writeln("dynamicAttr ", nameVal);
+            debug(EVAL) writeln("dynamicAttr ", nameVal);
             env = dynamicEnv.up;
-            forceValue(nameVal, expr.loc);
+            forceValue(nameVal);
             if (nameVal.type == Type.Null) {
                 continue;
             }
@@ -616,7 +610,7 @@ class Evaluator : ConstVisitors {
             enforce!EvalException(nameSym !in attrs, "dynamic attribute already defined: "~nameSym);
             attrs[nameSym] = maybeThunk(attr.value, dynamicEnv).dup;
         }
-        debug foreach (k, v; attrs) {
+        debug(EVAL) foreach (k, v; attrs) {
             writeln("  ", k, " = ", *v, " in env ", v.type == Type.Thunk ? v.env.vars : cast(Bindings) null);
         }
         value = new Value(attrs);
@@ -634,7 +628,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprLet expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         // Create a new environment that contains the attributes in this `let'.
         auto newEnv = new Env(env);
         // The recursive attributes are evaluated in the new environment,
@@ -649,7 +643,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprWith expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the with expression ", expr);
         auto newEnv = new Env(env, null, expr.attrs);
         env = newEnv;
         visit(expr.body);
@@ -657,7 +651,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprIf expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         if (visit(expr.cond).boolean)
             visit(expr.then);
         else
@@ -665,7 +659,7 @@ class Evaluator : ConstVisitors {
     }
 
     void visit(in ExprAssert expr) {
-        scope(failure) writeln("while evaluating the expression ", expr, " on ", expr.loc);
+        scope(failure) writeln("while evaluating the expression ", expr);
         import nix.printer : format;
         enforce!AssertionException(visit(expr.cond).boolean, format(expr.cond).idup);
         visit(expr.body);
@@ -678,7 +672,7 @@ public ref Value eval(in Expr expr, ref Env env = createBaseEnv()) /*pure*/ {
         assert(0);
         //return *v;
     }
-    debug writeln("eval ", expr, " in env ", env.vars);
+    debug(EVAL) writeln("eval ", expr, " in env ", env.vars);
     auto ev = new Evaluator(&env);
     expr.accept(ev);
     // env.cache[expr] = ev.value;
@@ -687,44 +681,44 @@ public ref Value eval(in Expr expr, ref Env env = createBaseEnv()) /*pure*/ {
 }
 
 unittest {
-    auto ZERO = new ExprInt(L, 0);
-    auto false_ = new ExprVar(L, "false");
-    auto true_ = new ExprVar(L, "true");
+    auto ZERO = new ExprInt(LOC, 0);
+    auto false_ = new ExprVar(LOC, "false");
+    auto true_ = new ExprVar(LOC, "true");
     auto ok = Value("ok", null);
 
-    assert(eval(new ExprBinaryOp(L, Tok.SUB, ZERO, new ExprFloat(L, 3))) == Value(-3.0));
-    assert(eval(new ExprBinaryOp(L, Tok.AND, false_, true_)) == Value(false));
-    assert(eval(new ExprBinaryOp(L, Tok.OR, false_, true_)) == Value(true));
+    assert(eval(new ExprBinaryOp(LOC, Tok.SUB, ZERO, new ExprFloat(LOC, 3))) == Value(-3.0));
+    assert(eval(new ExprBinaryOp(LOC, Tok.AND, false_, true_)) == Value(false));
+    assert(eval(new ExprBinaryOp(LOC, Tok.OR, false_, true_)) == Value(true));
 
-    auto att = new ExprAttrs(L, );
+    auto att = new ExprAttrs(LOC, );
     // { a = "ok"; }
-    att.attrs["a"] = ExprAttrs.AttrDef(new ExprString(L, "ok"));
+    att.attrs["a"] = ExprAttrs.AttrDef(new ExprString(LOC, "ok"));
     assert(eval(att) == Value(["a": &ok]));
     // { a = "ok"; true = true; }
     att.attrs["true"] = ExprAttrs.AttrDef(true_, true);
     assert(eval(att) == Value(["a": &ok, "true": new Value(true)]));
     // { a = "ok"; true = true; b = "p"; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(L, "p"), new ExprString(L, "b"));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprString(LOC, "p"), new ExprString(LOC, "b"));
     assert(eval(att) == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null)]));
     // rec { a = "ok"; true = true; b = "p"; }
     att.recursive = true;
     // rec { a = "ok"; true = true; b = "p"; c = a; }
-    att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar(L, "a"));
+    att.attrs["c"] = ExprAttrs.AttrDef(new ExprVar(LOC, "a"));
     assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok])); //needs `rec`
     // rec { a = "ok"; true = true; b = "p"; c = a; d = b; }
-    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprVar(L, "b"), new ExprString(L, "d"));
+    att.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(new ExprVar(LOC, "b"), new ExprString(LOC, "d"));
     assert(eval(att).forceValueDeep == Value(["a": &ok, "true": new Value(true), "b": new Value("p", null), "c": &ok, "d": new Value("p", null)])); //needs `rec`
-    assert(eval(new ExprFloat(L, 1.1)) == Value(1.1));
-    assert(eval(new ExprInt(L, 42)) == Value(42));
-    assert(eval(new ExprString(L, "foo")) == Value("foo", null));
-    assert(eval(new ExprPath(L, "/fo/o")) == Value("/fo/o"));
+    assert(eval(new ExprFloat(LOC, 1.1)) == Value(1.1));
+    assert(eval(new ExprInt(LOC, 42)) == Value(42));
+    assert(eval(new ExprString(LOC, "foo")) == Value("foo", null));
+    assert(eval(new ExprPath(LOC, "/fo/o")) == Value("/fo/o"));
     assert(eval(false_) == Value(false));
-    assert(eval(new ExprVar(L, "null")) == Value());
+    assert(eval(new ExprVar(LOC, "null")) == Value());
     assert(eval(true_) == Value(true));
-    assert(eval(new ExprAssert(L, true_, new ExprString(L, "ok"))) == ok);
-    assert(eval(new ExprOpNot(L, true_)) == Value(false));
-    assert(eval(new ExprOpNot(L, false_)) == Value(true));
-    assert(eval(new ExprIf(L, true_, new ExprString(L, "ok"), new ExprFloat(L, 1.1))) == ok);
-    assert(eval(new ExprIf(L, false_, new ExprFloat(L, 1.1), new ExprString(L, "ok"))) == ok);
-    assert(eval(new ExprList(L, [new ExprString(L, "ok")])) == Value([&ok]));
+    assert(eval(new ExprAssert(LOC, true_, new ExprString(LOC, "ok"))) == ok);
+    assert(eval(new ExprOpNot(LOC, true_)) == Value(false));
+    assert(eval(new ExprOpNot(LOC, false_)) == Value(true));
+    assert(eval(new ExprIf(LOC, true_, new ExprString(LOC, "ok"), new ExprFloat(LOC, 1.1))) == ok);
+    assert(eval(new ExprIf(LOC, false_, new ExprFloat(LOC, 1.1), new ExprString(LOC, "ok"))) == ok);
+    assert(eval(new ExprList(LOC, [new ExprString(LOC, "ok")])) == Value([&ok]));
 }

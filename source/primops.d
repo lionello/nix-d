@@ -35,14 +35,14 @@ private Value genList(ref Value func, ref Value count) {
     Value*[] list;
     foreach (n; 0..length) {
         auto v = Value(n);
-        list ~= callFunction(func, v, Loc()).dup;
+        list ~= callFunction(func, v).dup;
     }
     return Value(list);
 }
 
 private Value any(ref Value fun, ref Value list) /*pure*/ {
     foreach (e; forceValue(list).list) {
-        if (callFunction(fun, *e, Loc()).boolean)
+        if (callFunction(fun, *e).boolean)
             return Value.TRUE;
     }
     return Value.FALSE;
@@ -50,7 +50,7 @@ private Value any(ref Value fun, ref Value list) /*pure*/ {
 
 private Value all(ref Value fun, ref Value list) /*pure*/ {
     foreach (e; forceValue(list).list) {
-        if (!callFunction(fun, *e, Loc()).boolean)
+        if (!callFunction(fun, *e).boolean)
             return Value.FALSE;
     }
     return Value.TRUE;
@@ -269,8 +269,8 @@ private Value elem(ref Value val, ref Value list) /*pure*/ {
 private Value foldl_(ref Value func, ref Value v, ref Value list) {
     Value acc = v;
     foreach (e; forceValue(list).list) {
-        auto partial = callFunction(func, acc, Loc());
-        acc = callFunction(partial, *e, Loc());
+        auto partial = callFunction(func, acc);
+        acc = callFunction(partial, *e);
     }
     return acc;
 }
@@ -443,7 +443,7 @@ private Value attrNames(ref Value attrs) {
 private Value map(ref Value fun, ref Value list) {
     Value*[] output;
     foreach (e; forceValue(list).list) {
-        output ~= callFunction(fun, *e, Loc()).dup;
+        output ~= callFunction(fun, *e).dup;
     }
     return Value(output);
 }
@@ -486,7 +486,7 @@ private Value genericClosure(ref Value attr) {
         done[key] = true;
         assert(key in done);
         res ~= e.dup;
-        auto result = callFunction(operator, e, Loc());
+        auto result = callFunction(operator, e);
         startSet ~= forceValue(result).list;
     }
     return Value(res);
@@ -501,7 +501,7 @@ private Value baseNameOf(ref Value file) {
 private Value concatMap(ref Value fun, ref Value list) {
     Value*[] output;
     foreach (e; forceValue(list).list) {
-        output ~= callFunction(fun, *e, Loc()).list;
+        output ~= callFunction(fun, *e).list;
     }
     return Value(output);
 }
@@ -558,8 +558,8 @@ private Value sort(ref Value fun, ref Value list) {
     import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
     bool cmp(Value* a, Value* b) {
-        auto partial = callFunction(fun, *a, Loc());
-        return callFunction(partial, *b, Loc()).boolean;
+        auto partial = callFunction(fun, *a);
+        return callFunction(partial, *b).boolean;
     }
     return Value(sort!(cmp, SwapStrategy.stable)(forceValue(list).list).array);
 }
@@ -618,7 +618,7 @@ private Value concatLists(ref Value lists) {
 private Value filter(ref Value fun, ref Value list) {
     Value*[] output;
     foreach (e; forceValue(list).list) {
-        if (callFunction(fun, forceValue(*e), Loc()).boolean)
+        if (callFunction(fun, forceValue(*e)).boolean)
             output ~= e;
     }
     return Value(output);

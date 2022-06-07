@@ -387,7 +387,6 @@ struct Value {
     }
 
     private static int cmp(L,R)(in L lhs, in R rhs) @nogc pure @safe nothrow {
-        // static if (__traits(compiles, L.init.opCmp(R.init)))
         return (lhs > rhs) - (lhs < rhs);
     }
 

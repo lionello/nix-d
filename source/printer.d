@@ -39,7 +39,7 @@ void println(W)(in Expr expr, auto ref W writer) if (isStringWriter!W) {
 
 unittest {
     StringWriter sw;
-    println(new ExprString(Loc(), "x"), &sw);
+    println(new ExprString(LOC, "x"), &sw);
     assert(sw.b == "\"x\"\n");
 }
 

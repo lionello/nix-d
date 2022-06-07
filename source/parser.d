@@ -11,6 +11,9 @@ alias NixInt = long;
 alias NixFloat = double;
 alias Ident = string;
 
+/// Helper for unittest
+@property Loc LOC(int line = __LINE__) pure @safe nothrow @nogc { return Loc(line); }
+
 struct AttrName {
     Ident ident;
     Expr expr;
@@ -44,6 +47,7 @@ abstract class Expr : Visitable {
     Loc loc;
 
     this(Loc loc) pure nothrow {
+        assert(loc.line);
         this.loc = loc;
     }
 
@@ -483,7 +487,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
             auto pos = new ExprAttrs(t.loc);
             // pos.attrs["file"] = ExprAttrs.AttrDef(new ExprString(t.loc, t.loc.file));
             pos.attrs["line"] = ExprAttrs.AttrDef(new ExprInt(t.loc, t.loc.line));
-            // pos.attrs["column"] = ExprAttrs.AttrDef(new ExprInt(t.loc, t.loc.column));
+            pos.attrs["column"] = ExprAttrs.AttrDef(new ExprInt(t.loc, t.loc.column));
             return pos;
         }
         return new ExprVar(t.loc, t.s);
@@ -500,7 +504,6 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         assert(e, input.front.s);
         enforce(input.front.tok == Tok.RIGHT_PARENS, "syntax error, unexpected '"~input.front.s~"', expecting ')'");
         input.popFront(); // eat the )
-        // Wrap the resulting expression in a NOP to avoid assoc reshuffling
         return e;
     case Tok.INT:
         input.popFront();
@@ -525,7 +528,7 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront(); // eat the "
         return parseStr(input);
     case Tok.STRING:
-        auto tokens = parseString(input.front.s);
+        auto tokens = parseString(input.front.s, t.loc);
         input.popFront();
         assert(tokens.front.tok == Tok.STRING_OPEN);
         tokens.popFront(); // eat the "
@@ -549,7 +552,8 @@ private Expr parseSimple(R)(ref R input) pure if (isTokenRange!R) {
             }
         }
         auto text = lines.join('\n') ~ "''";
-        auto tokens = parseIndString(text, false);
+        auto tokens = parseIndString(text, t.loc, false);
+        assert(t.loc.line);
         return parseStr(tokens);
     default:
         return null;
@@ -618,11 +622,11 @@ private Expr parseStr(R)(ref R input) pure if (isTokenRange!R) {
 
 unittest {
     auto r = [
-        // Token(Tok.STRING_OPEN),
-        Token(Tok.DOLLAR_CURLY),
-        Token(Tok.INT, "2"),
-        Token(Tok.RIGHT_CURLY),
-        Token(Tok.STRING_CLOSE)
+        // Token(Tok.STRING_OPEN), skipped
+        Token(Tok.DOLLAR_CURLY, null, LOC),
+        Token(Tok.INT, "2", LOC),
+        Token(Tok.RIGHT_CURLY, null, LOC),
+        Token(Tok.STRING_CLOSE, null, LOC)
     ];
     assert(cast(ExprBinaryOp) parseStr(r));
     assert(r.empty);
@@ -1123,7 +1127,7 @@ private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
     const loc = input.front.loc;
     switch (input.front.tok) {
     case Tok.SELECT:
-        assert(arg);
+        assert(arg, loc.toString());
         input.popFront(); // eat the .
         auto attrpath = parseAttrPath(input);
         if (input.front.tok == Tok.OR_KW) {
@@ -1134,7 +1138,7 @@ private Expr parseSelect(R)(ref R input) pure if (isTokenRange!R) {
             return new ExprSelect(loc, arg, attrpath);
         }
     case Tok.OR_KW:
-        assert(arg);
+        assert(arg, loc.toString());
         input.popFront(); // eat the or
         /* Backwards compatibility: because Nixpkgs has a rarely used
             function named ‘or’, allow stuff like ‘map or [...]’. */
@@ -1153,7 +1157,7 @@ private AttrName parseAttr(R)(ref R input) pure if (isTokenRange!R) {
         input.popFront(); // eat the }
         return AttrName(expr);
     case Tok.STRING: // could contain ${}
-        auto tokens = parseString(input.front.s);
+        auto tokens = parseString(input.front.s, input.front.loc);
         input.popFront();
         assert(tokens.front.tok == Tok.STRING_OPEN);
         tokens.popFront(); // eat the "
@@ -1215,7 +1219,6 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
             }
         } else {
             auto nested = new ExprAttrs(i.expr.loc);
-            // debug writeln(__LINE__,format(i.expr));
             attrs.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(nested, i.expr);
             attrs = nested;
         }
@@ -1238,7 +1241,6 @@ private void addAttr(ExprAttrs attrs, AttrPath ap, Expr e) pure {
             attrs.attrs[i.ident] = ExprAttrs.AttrDef(e);
         }
     } else {
-        // debug writeln(__LINE__,format(i.expr));
         attrs.dynamicAttrs ~= ExprAttrs.DynamicAttrDef(e, i.expr);
     }
 }
