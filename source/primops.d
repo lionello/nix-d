@@ -636,6 +636,32 @@ private Value floor(ref Value f) {
     return Value(floor(forceValue(f)._number));
 }
 
+private Value replaceStrings(ref Value from, ref Value to, ref Value str) {
+    import std.algorithm.iteration: map;
+    import std.algorithm.searching: startsWith;
+    auto fromList = forceValue(from).list;
+    auto toList = forceValue(to).list;
+    enforce!EvalException(fromList.length == toList.length, "'from' and 'to' arguments to 'replaceStrings' have different lengths");
+    const ss = forceValue(str).str;
+    auto context = ss.context.dupx; // TODO: COW
+    string result = ss.raw;
+    auto fromList_ = fromList.map!(a => forceStringNoCtx(*a)).enumerate;
+    for (size_t i = 0; i <= result.length; i++) {
+        foreach (f, fromStr; fromList_) {
+            if (result[i..$].startsWith(fromStr)) {
+                const tox = forceValue(*toList[f]).str;
+                result = result[0..i] ~ tox ~ result[i+fromStr.length..$];
+                foreach (k, v; tox.context) {
+                    context[k] = v;
+                }
+                i += tox.length - (fromStr.length != 0);
+                break;
+            }
+        }
+    }
+    return Value(result, context);
+}
+
 ref Env createBaseEnv() {
     import core.stdc.time : time;
 
@@ -740,7 +766,7 @@ ref Env createBaseEnv() {
         // "__readDir" : ni!"__readDir",
         // "__readFile" : ni!"__readFile",
         "removeAttrs" : wrap!removeAttrs,
-        // "__replaceStrings" : ni!"__replaceStrings",
+        "__replaceStrings" : wrap!replaceStrings,
         // "scopedImport" : ni!"scopedImport",
         "__seq" : wrap!seq,
         "__sort" : wrap!sort,
